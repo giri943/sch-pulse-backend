@@ -1,0 +1,59 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+.pnpm-debug.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+lerna-debug.log*
+
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Environment files
+.env
+.env.*
+
+# Build output
+dist/
+build/
+.tmp/
+
+# IDEs and editors
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# OS files
+*.swp
+*.swo
+*.tmp
+
+# Optional npm cache
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Temporary files
+*.tmp
+*.temp
+
+# Backend specific
+coverage/
+.cache/

@@ -1,0 +1,98 @@
+import type { EmailMessage } from "./index";
+
+interface RecommendationSnap {
+  title: string;
+  steps: string[];
+}
+
+function shell(title: string, bodyHtml: string): string {
+  return `<!doctype html><html><body style="font-family:system-ui,Segoe UI,Arial,sans-serif;background:#0b0e14;color:#e6e9ef;padding:24px">
+  <div style="max-width:560px;margin:0 auto;background:#11151d;border:1px solid #1e2530;border-radius:12px;padding:24px">
+  <h2 style="margin:0 0 16px">${title}</h2>${bodyHtml}
+  <p style="color:#6b7280;font-size:12px;margin-top:24px">Schbang Pulse · automated monitoring alert</p>
+  </div></body></html>`;
+}
+
+function recsHtml(recs: RecommendationSnap[]): string {
+  if (!recs.length) return "";
+  return `<div style="margin-top:16px;padding:12px;background:#0f141c;border-radius:8px">
+    <strong>Suggested checks:</strong>${recs
+      .map((r) => `<div style="margin-top:8px"><b>${r.title}</b><ul>${r.steps.map((s) => `<li>${s}</li>`).join("")}</ul></div>`)
+      .join("")}</div>`;
+}
+
+export function incidentOpenedEmail(p: {
+  to: string[];
+  monitorName: string;
+  url: string;
+  error: string;
+  statusCode?: number;
+  timestamp: string;
+  recommendations: RecommendationSnap[];
+}): EmailMessage {
+  const subject = `[DOWN] ${p.monitorName}`;
+  const rows = `<p><b>URL:</b> ${p.url}</p><p><b>Error:</b> ${p.error}</p><p><b>Response code:</b> ${p.statusCode ?? "—"}</p><p><b>Detected at:</b> ${p.timestamp}</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell(`🔴 ${p.monitorName} is DOWN`, rows + recsHtml(p.recommendations)),
+    text: `${subject}\nURL: ${p.url}\nError: ${p.error}\nCode: ${p.statusCode ?? "-"}\nAt: ${p.timestamp}`,
+  };
+}
+
+export function incidentResolvedEmail(p: {
+  to: string[];
+  monitorName: string;
+  url: string;
+  downtime: string;
+  recoveredAt: string;
+}): EmailMessage {
+  const subject = `[RECOVERED] ${p.monitorName}`;
+  const rows = `<p><b>URL:</b> ${p.url}</p><p><b>Downtime duration:</b> ${p.downtime}</p><p><b>Recovered at:</b> ${p.recoveredAt}</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell(`🟢 ${p.monitorName} has RECOVERED`, rows),
+    text: `${subject}\nURL: ${p.url}\nDowntime: ${p.downtime}\nRecovered: ${p.recoveredAt}`,
+  };
+}
+
+export function sslWarningEmail(p: {
+  to: string[];
+  domain: string;
+  expiresAt: string;
+  daysRemaining: number;
+}): EmailMessage {
+  const subject = `[SSL EXPIRY WARNING] ${p.domain}`;
+  const rows = `<p><b>Domain:</b> ${p.domain}</p><p><b>Expiry date:</b> ${p.expiresAt}</p><p><b>Remaining days:</b> ${p.daysRemaining}</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell(`⚠️ SSL certificate expiring in ${p.daysRemaining} days`, rows),
+    text: `${subject}\nDomain: ${p.domain}\nExpires: ${p.expiresAt}\nDays left: ${p.daysRemaining}`,
+  };
+}
+
+export function testNotificationEmail(p: {
+  to: string[];
+  monitorName: string;
+  url: string;
+}): EmailMessage {
+  const subject = `[TEST] ${p.monitorName} — Schbang Pulse`;
+  const rows = `<p>This is a <b>test notification</b> for <b>${p.monitorName}</b> (${p.url}).</p>
+    <p>If you received this email, alerts for this monitor are configured correctly. ✅</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell(`🔔 Test notification`, rows),
+    text: `${subject}\nThis is a test notification for ${p.monitorName} (${p.url}). Alerts are configured correctly.`,
+  };
+}
+
+/** Format seconds as a human downtime string. */
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m ${seconds % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
