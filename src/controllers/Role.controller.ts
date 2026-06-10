@@ -10,6 +10,14 @@ const validPerms = new Set<string>(ALL_PERMISSIONS);
 const sanitize = (perms: unknown): string[] =>
   Array.isArray(perms) ? perms.filter((p): p is string => typeof p === "string" && validPerms.has(p)) : [];
 
+const serialize = (r: { _id: unknown; name: string; description: string; permissions: string[]; isSystem: boolean }) => ({
+  id: String(r._id),
+  name: r.name,
+  description: r.description,
+  permissions: r.permissions,
+  isSystem: r.isSystem,
+});
+
 /** The permission catalog the role-builder UI renders as checkboxes. */
 export function permissionCatalog(_req: Request, res: Response): void {
   res.json(PERMISSION_CATALOG);
@@ -43,7 +51,7 @@ export async function createRole(req: Request, res: Response): Promise<void> {
     isSystem: false,
   });
   await writeAudit(req, "role.create", { targetType: "role", targetId: role.id });
-  res.status(201).json(role);
+  res.status(201).json(serialize(role));
 }
 
 export async function updateRole(req: Request, res: Response): Promise<void> {
@@ -57,7 +65,7 @@ export async function updateRole(req: Request, res: Response): Promise<void> {
   await role.save();
   bustRoleCache(role.id);
   await writeAudit(req, "role.update", { targetType: "role", targetId: role.id });
-  res.json(role);
+  res.json(serialize(role));
 }
 
 export async function deleteRole(req: Request, res: Response): Promise<void> {
