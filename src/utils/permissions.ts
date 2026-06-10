@@ -32,6 +32,9 @@ export const PERMISSIONS = {
   RULE_READ: "rule:read",
   RULE_MANAGE: "rule:manage",
 
+  CHANNEL_READ: "channel:read",
+  CHANNEL_MANAGE: "channel:manage",
+
   AUDIT_READ: "audit:read",
 } as const;
 
@@ -88,6 +91,13 @@ export const PERMISSION_CATALOG: { resource: string; items: { key: Permission; l
     ],
   },
   {
+    resource: "Notification channels",
+    items: [
+      { key: PERMISSIONS.CHANNEL_READ, label: "View / tag channels" },
+      { key: PERMISSIONS.CHANNEL_MANAGE, label: "Manage channels" },
+    ],
+  },
+  {
     resource: "Audit logs",
     items: [{ key: PERMISSIONS.AUDIT_READ, label: "View audit logs" }],
   },
@@ -105,6 +115,7 @@ export const MEMBER_PERMISSIONS: Permission[] = [
   PERMISSIONS.MONITOR_RUN_OWN,
   PERMISSIONS.INCIDENT_READ_OWN,
   PERMISSIONS.INCIDENT_UPDATE_OWN,
+  PERMISSIONS.CHANNEL_READ,
 ];
 
 export const has = (perms: string[], key: Permission): boolean => perms.includes(key);

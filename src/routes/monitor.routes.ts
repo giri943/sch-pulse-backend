@@ -33,6 +33,7 @@ router.delete("/:id", canDelete, validate({ params: idParamSchema }), catchAsync
 router.post("/:id/pause", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.pauseMonitor));
 router.post("/:id/resume", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.resumeMonitor));
 router.post("/:id/run", canRun, validate({ params: idParamSchema }), catchAsync(MonitorController.runMonitor));
+router.post("/:id/restore", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.restoreMonitor));
 router.post(
   "/:id/test-notification",
   canRun,

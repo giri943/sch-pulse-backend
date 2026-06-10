@@ -89,6 +89,39 @@ export function testNotificationEmail(p: {
   };
 }
 
+export function monitorExpiringEmail(p: {
+  to: string[];
+  monitorName: string;
+  url: string;
+  daysRemaining: number;
+  expiresAt: string;
+}): EmailMessage {
+  const subject = `[MONITORING ENDING] ${p.monitorName} — ${p.daysRemaining} day(s) left`;
+  const rows = `<p><b>${p.monitorName}</b> (${p.url})</p>
+    <p>The monitoring period ends in <b>${p.daysRemaining} day(s)</b> on ${new Date(p.expiresAt).toDateString()}.</p>
+    <p>To keep monitoring this service, <b>extend the period</b> from the monitor's page. If it is not
+    extended, the monitor will be removed and permanently deleted 7 days later.</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell(`⏳ Monitoring ending soon`, rows),
+    text: `${subject}\n${p.monitorName} (${p.url}) monitoring ends in ${p.daysRemaining} day(s) on ${new Date(p.expiresAt).toDateString()}. Extend to keep monitoring.`,
+  };
+}
+
+export function monitorExpiredEmail(p: { to: string[]; monitorName: string; url: string }): EmailMessage {
+  const subject = `[MONITORING ENDED] ${p.monitorName}`;
+  const rows = `<p><b>${p.monitorName}</b> (${p.url})</p>
+    <p>The monitoring period has ended, so monitoring has stopped and the monitor has been archived.</p>
+    <p>It will be <b>permanently deleted in 7 days</b>. Restore it before then if this was unintended.</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell(`🗑️ Monitoring ended`, rows),
+    text: `${subject}\n${p.monitorName} (${p.url}) monitoring ended and was archived. Permanent deletion in 7 days unless restored.`,
+  };
+}
+
 /** Format seconds as a human downtime string. */
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;

@@ -32,6 +32,9 @@ const baseMonitor = z.object({
   assertions: z.array(assertionSchema).optional(),
   members: z.array(objectId).default([]),
   extraAlertEmails: z.array(z.string().email()).default([]),
+  channels: z.array(objectId).default([]),
+  /** End of monitoring period; null/omitted = monitor indefinitely. */
+  expiresAt: z.coerce.date().nullable().optional(),
   enabled: z.boolean().default(true),
 });
 

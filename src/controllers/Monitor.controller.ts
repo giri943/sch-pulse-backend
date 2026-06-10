@@ -23,6 +23,25 @@ const RANGE_MS: Record<UptimeRange, number> = {
   "30d": 30 * 24 * 60 * 60 * 1000,
 };
 
+/** Normalize populated members/channels to clean { id, ... } refs, dropping deleted (null) refs. */
+function serializeMonitor<T extends Record<string, unknown>>(m: T): T {
+  const ref = (r: unknown): { _id?: unknown; id?: unknown; name?: string; email?: string; avatarUrl?: string | null; type?: string } | null =>
+    r && typeof r === "object" ? (r as Record<string, unknown>) : null;
+  const members = (m.members as unknown[] | undefined) ?? [];
+  const channels = (m.channels as unknown[] | undefined) ?? [];
+  return {
+    ...m,
+    members: members
+      .map(ref)
+      .filter((u): u is NonNullable<typeof u> => !!u && !!u._id)
+      .map((u) => ({ id: String(u._id), name: u.name, email: u.email, avatarUrl: u.avatarUrl ?? null })),
+    channels: channels
+      .map(ref)
+      .filter((c): c is NonNullable<typeof c> => !!c && !!c._id)
+      .map((c) => ({ id: String(c._id), name: c.name, type: c.type })),
+  };
+}
+
 /** Resolve a monitor's alert recipients = tagged members' emails + extra emails. */
 async function recipientsFor(monitor: { members?: unknown[]; extraAlertEmails?: string[] }): Promise<string[]> {
   const memberIds = monitor.members ?? [];
@@ -55,19 +74,30 @@ export async function listMonitors(req: Request, res: Response): Promise<void> {
   const filter: Record<string, unknown> = { ...monitorScopeFilter(req.user!) };
   if (q.type) filter.type = q.type;
   if (q.enabled !== undefined) filter.enabled = q.enabled === "true";
+  // Archived (soft-deleted) monitors are hidden unless explicitly requested.
+  filter.softDeletedAt = q.deleted === "true" ? { $ne: null } : null;
 
   const [data, total] = await Promise.all([
-    Monitor.find(filter).sort(parseSort(q.sort)).skip(skip(page, limit)).limit(limit).lean(),
+    Monitor.find(filter)
+      .sort(parseSort(q.sort))
+      .skip(skip(page, limit))
+      .limit(limit)
+      .populate("members", "name email avatarUrl")
+      .populate("channels", "name type")
+      .lean(),
     Monitor.countDocuments(filter),
   ]);
-  res.json(paginate(data, total, page, limit));
+  res.json(paginate(data.map(serializeMonitor), total, page, limit));
 }
 
 export async function getMonitor(req: Request, res: Response): Promise<void> {
-  const monitor = await Monitor.findById(req.params.id).populate("members", "name email avatarUrl").lean();
+  const monitor = await Monitor.findById(req.params.id)
+    .populate("members", "name email avatarUrl")
+    .populate("channels", "name type")
+    .lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
   assertCanReadMonitor(req.user!, monitor);
-  res.json(monitor);
+  res.json(serializeMonitor(monitor));
 }
 
 export async function updateMonitor(req: Request, res: Response): Promise<void> {
@@ -89,9 +119,30 @@ export async function deleteMonitor(req: Request, res: Response): Promise<void> 
   if (!existing) throw ApiError.notFound("Monitor not found");
   assertCanWriteMonitor(req.user!, existing, "delete");
 
+  // Cascade: remove the monitor's checks, incidents and stats too.
+  await Promise.all([
+    Check.deleteMany({ monitorId: existing._id }),
+    Incident.deleteMany({ monitorId: existing._id }),
+    UptimeStat.deleteMany({ monitorId: existing._id }),
+  ]);
   await Monitor.findByIdAndDelete(req.params.id);
   await writeAudit(req, "monitor.delete", { targetType: "monitor", targetId: req.params.id });
   res.status(204).send();
+}
+
+/** Restore a soft-deleted (expired) monitor; clears the expiry so it won't re-expire. */
+export async function restoreMonitor(req: Request, res: Response): Promise<void> {
+  const existing = await Monitor.findById(req.params.id).lean();
+  if (!existing) throw ApiError.notFound("Monitor not found");
+  assertCanWriteMonitor(req.user!, existing, "update");
+
+  const monitor = await Monitor.findByIdAndUpdate(
+    req.params.id,
+    { softDeletedAt: null, enabled: true, status: "unknown", nextRunAt: new Date(), expiresAt: null, expiryRemindersSent: [] },
+    { new: true },
+  ).lean();
+  await writeAudit(req, "monitor.restore", { targetType: "monitor", targetId: req.params.id });
+  res.json(monitor);
 }
 
 async function setEnabled(req: Request, res: Response, enabled: boolean, action: string) {

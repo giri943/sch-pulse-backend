@@ -4,6 +4,7 @@ import { logger } from "./config/logger";
 import { connectDatabase, disconnectDatabase } from "./config/database";
 import { createApp } from "./app";
 import { startMonitoring } from "./services/monitoring";
+import { startLifecycle } from "./services/monitoring/lifecycle";
 
 async function bootstrap(): Promise<void> {
   await connectDatabase();
@@ -25,8 +26,9 @@ async function bootstrap(): Promise<void> {
     throw err;
   });
 
-  // In-process monitoring cron (no AWS). This is the single-process design.
+  // In-process crons (no AWS): monitoring checks (every ~20s) + lifecycle (hourly).
   const monitoringTask: ScheduledTask = startMonitoring();
+  const lifecycleTask: ScheduledTask = startLifecycle();
 
   let shuttingDown = false;
   const shutdown = (signal: string) => {
@@ -34,6 +36,7 @@ async function bootstrap(): Promise<void> {
     shuttingDown = true;
     logger.info(`${signal} received — shutting down`);
     monitoringTask.stop();
+    lifecycleTask.stop();
     // Immediately drop keep-alive sockets (e.g. the dashboard's polling) so the
     // port is released right away — otherwise tsx watch's new process hits EADDRINUSE.
     server.closeAllConnections?.();

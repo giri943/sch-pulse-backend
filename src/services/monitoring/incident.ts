@@ -7,6 +7,7 @@ import { logger } from "../../config/logger";
 import type { CheckResult, MonitorWithId } from "./types";
 import { recordStat } from "./stats";
 import { getRecommendations } from "../recommendations";
+import { notifyChannels } from "../channels";
 import {
   formatDuration,
   incidentOpenedEmail,
@@ -25,6 +26,20 @@ async function alertRecipients(monitor: MonitorWithId): Promise<string[]> {
   }
   const extras = (monitor.extraAlertEmails as string[] | undefined) ?? [];
   return [...new Set([...memberEmails, ...extras])];
+}
+
+/**
+ * Google Chat @mentions for tagged members who signed in with Google. Chat
+ * mentions need the user's Google ID (we store it as `googleId`); email-only
+ * users can't be mentioned. Returns e.g. "<users/123> <users/456>".
+ */
+async function memberMentions(monitor: MonitorWithId): Promise<string> {
+  const memberIds = (monitor.members as unknown[] | undefined) ?? [];
+  if (!memberIds.length) return "";
+  const users = await User.find({ _id: { $in: memberIds }, googleId: { $ne: null } })
+    .select("googleId")
+    .lean();
+  return users.map((u) => `<users/${u.googleId}>`).join(" ");
 }
 
 /**
@@ -97,6 +112,11 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
         recommendations,
       }),
     );
+    const mentions = await memberMentions(monitor);
+    await notifyChannels(
+      monitor.channels as unknown[] | undefined,
+      `${mentions ? mentions + "\n" : ""}🔴 *DOWN* — ${monitor.name}\n${monitor.url}\nError: ${result.error ?? "check failed"}${result.statusCode ? ` (HTTP ${result.statusCode})` : ""}\nDetected: ${now.toISOString()}\nPlease take necessary action.`,
+    );
     logger.warn({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident opened");
   } catch (err) {
     if ((err as { code?: number }).code !== 11000) throw err; // ignore duplicate open incident
@@ -143,6 +163,11 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
       recoveredAt: now.toISOString(),
     }),
   );
+  const recoveryMentions = await memberMentions(monitor);
+  await notifyChannels(
+    monitor.channels as unknown[] | undefined,
+    `${recoveryMentions ? recoveryMentions + "\n" : ""}🟢 *RECOVERED* — ${monitor.name}\n${monitor.url}\nDowntime: ${formatDuration(incident.durationSec ?? 0)}`,
+  );
   logger.info({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident resolved");
 }
 
@@ -162,6 +187,10 @@ async function handleSslWarnings(monitor: MonitorWithId, expiresAt: Date, now: D
       expiresAt: expiresAt.toISOString(),
       daysRemaining,
     }),
+  );
+  await notifyChannels(
+    monitor.channels as unknown[] | undefined,
+    `⚠️ *SSL expiring* — ${monitor.url}\nCertificate expires in ${daysRemaining} day(s) (${expiresAt.toDateString()}).`,
   );
   logger.warn({ monitorId: String(monitor._id), daysRemaining, threshold: due }, "SSL warning sent");
 }
