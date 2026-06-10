@@ -4,11 +4,17 @@ import { Monitor } from "../models/monitor.model";
 import { Check } from "../models/check.model";
 import { Incident } from "../models/incident.model";
 import { UptimeStat } from "../models/uptimeStat.model";
+import { User } from "../models/user.model";
 import { ApiError } from "../utils/ApiError";
 import { paginate, pageParams } from "../utils/response";
 import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
 import { sendEmail, testNotificationEmail } from "../services/mailer";
+import {
+  assertCanReadMonitor,
+  assertCanWriteMonitor,
+  monitorScopeFilter,
+} from "../utils/access";
 import type { UptimeRange } from "../utils/constants";
 
 const RANGE_MS: Record<UptimeRange, number> = {
@@ -17,8 +23,24 @@ const RANGE_MS: Record<UptimeRange, number> = {
   "30d": 30 * 24 * 60 * 60 * 1000,
 };
 
+/** Resolve a monitor's alert recipients = tagged members' emails + extra emails. */
+async function recipientsFor(monitor: { members?: unknown[]; extraAlertEmails?: string[] }): Promise<string[]> {
+  const memberIds = monitor.members ?? [];
+  let memberEmails: string[] = [];
+  if (memberIds.length) {
+    const users = await User.find({ _id: { $in: memberIds } }).select("email").lean();
+    memberEmails = users.map((u) => u.email);
+  }
+  return [...new Set([...memberEmails, ...(monitor.extraAlertEmails ?? [])])];
+}
+
 export async function createMonitor(req: Request, res: Response): Promise<void> {
-  const monitor = await Monitor.create({ ...req.body, nextRunAt: new Date(), status: "unknown" });
+  const monitor = await Monitor.create({
+    ...req.body,
+    createdBy: req.user!.id,
+    nextRunAt: new Date(),
+    status: "unknown",
+  });
   await writeAudit(req, "monitor.create", {
     targetType: "monitor",
     targetId: String(monitor._id),
@@ -30,7 +52,7 @@ export async function createMonitor(req: Request, res: Response): Promise<void> 
 export async function listMonitors(req: Request, res: Response): Promise<void> {
   const { page, limit } = pageParams(req.query);
   const q = req.query as Record<string, string>;
-  const filter: Record<string, unknown> = {};
+  const filter: Record<string, unknown> = { ...monitorScopeFilter(req.user!) };
   if (q.type) filter.type = q.type;
   if (q.enabled !== undefined) filter.enabled = q.enabled === "true";
 
@@ -42,14 +64,18 @@ export async function listMonitors(req: Request, res: Response): Promise<void> {
 }
 
 export async function getMonitor(req: Request, res: Response): Promise<void> {
-  const monitor = await Monitor.findById(req.params.id).lean();
+  const monitor = await Monitor.findById(req.params.id).populate("members", "name email avatarUrl").lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
+  assertCanReadMonitor(req.user!, monitor);
   res.json(monitor);
 }
 
 export async function updateMonitor(req: Request, res: Response): Promise<void> {
+  const existing = await Monitor.findById(req.params.id).lean();
+  if (!existing) throw ApiError.notFound("Monitor not found");
+  assertCanWriteMonitor(req.user!, existing, "update");
+
   const monitor = await Monitor.findByIdAndUpdate(req.params.id, req.body, { new: true }).lean();
-  if (!monitor) throw ApiError.notFound("Monitor not found");
   await writeAudit(req, "monitor.update", {
     targetType: "monitor",
     targetId: req.params.id,
@@ -59,40 +85,61 @@ export async function updateMonitor(req: Request, res: Response): Promise<void> 
 }
 
 export async function deleteMonitor(req: Request, res: Response): Promise<void> {
-  const monitor = await Monitor.findByIdAndDelete(req.params.id).lean();
-  if (!monitor) throw ApiError.notFound("Monitor not found");
+  const existing = await Monitor.findById(req.params.id).lean();
+  if (!existing) throw ApiError.notFound("Monitor not found");
+  assertCanWriteMonitor(req.user!, existing, "delete");
+
+  await Monitor.findByIdAndDelete(req.params.id);
   await writeAudit(req, "monitor.delete", { targetType: "monitor", targetId: req.params.id });
   res.status(204).send();
 }
 
 async function setEnabled(req: Request, res: Response, enabled: boolean, action: string) {
+  const existing = await Monitor.findById(req.params.id).lean();
+  if (!existing) throw ApiError.notFound("Monitor not found");
+  assertCanWriteMonitor(req.user!, existing, "update");
+
   const update = enabled
     ? { enabled: true, status: "unknown", nextRunAt: new Date() }
     : { enabled: false, status: "paused" };
   const monitor = await Monitor.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
-  if (!monitor) throw ApiError.notFound("Monitor not found");
   await writeAudit(req, action, { targetType: "monitor", targetId: req.params.id });
   res.json(monitor);
 }
 
-export const pauseMonitor = (req: Request, res: Response) =>
-  setEnabled(req, res, false, "monitor.pause");
-export const resumeMonitor = (req: Request, res: Response) =>
-  setEnabled(req, res, true, "monitor.resume");
+export const pauseMonitor = (req: Request, res: Response) => setEnabled(req, res, false, "monitor.pause");
+export const resumeMonitor = (req: Request, res: Response) => setEnabled(req, res, true, "monitor.resume");
 
 /** Trigger an immediate check: mark the monitor due so the cron runs it next tick. */
 export async function runMonitor(req: Request, res: Response): Promise<void> {
-  const monitor = await Monitor.findByIdAndUpdate(
-    req.params.id,
-    { nextRunAt: new Date() },
-    { new: true },
-  ).lean();
-  if (!monitor) throw ApiError.notFound("Monitor not found");
+  const existing = await Monitor.findById(req.params.id).lean();
+  if (!existing) throw ApiError.notFound("Monitor not found");
+  assertCanWriteMonitor(req.user!, existing, "run");
+
+  await Monitor.findByIdAndUpdate(req.params.id, { nextRunAt: new Date() });
   await writeAudit(req, "monitor.run", { targetType: "monitor", targetId: req.params.id });
   res.status(202).json({ message: "Check scheduled — will run on the next cron tick" });
 }
 
+/** Send a test notification to the monitor's recipients (members + extra emails). */
+export async function testNotification(req: Request, res: Response): Promise<void> {
+  const monitor = await Monitor.findById(req.params.id).lean();
+  if (!monitor) throw ApiError.notFound("Monitor not found");
+  assertCanWriteMonitor(req.user!, monitor, "run");
+
+  const to = await recipientsFor(monitor);
+  if (!to.length) throw ApiError.badRequest("This monitor has no alert recipients configured");
+
+  await sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url }));
+  await writeAudit(req, "monitor.test_notification", { targetType: "monitor", targetId: req.params.id });
+  res.json({ message: `Test notification sent to ${to.length} recipient(s)`, recipients: to });
+}
+
 export async function monitorChecks(req: Request, res: Response): Promise<void> {
+  const monitor = await Monitor.findById(req.params.id).lean();
+  if (!monitor) throw ApiError.notFound("Monitor not found");
+  assertCanReadMonitor(req.user!, monitor);
+
   const { page, limit } = pageParams(req.query);
   const filter = { monitorId: req.params.id };
   const [data, total] = await Promise.all([
@@ -103,6 +150,10 @@ export async function monitorChecks(req: Request, res: Response): Promise<void> 
 }
 
 export async function monitorUptime(req: Request, res: Response): Promise<void> {
+  const monitor = await Monitor.findById(req.params.id).select("createdBy members").lean();
+  if (!monitor) throw ApiError.notFound("Monitor not found");
+  assertCanReadMonitor(req.user!, monitor);
+
   const range = ((req.query.range as string) || "24h") as UptimeRange;
   const from = new Date(Date.now() - (RANGE_MS[range] ?? RANGE_MS["24h"]));
   const buckets = await UptimeStat.find({
@@ -128,22 +179,9 @@ export async function monitorUptime(req: Request, res: Response): Promise<void> 
   });
 }
 
-/** Send a test notification email to the monitor's alert recipients. */
-export async function testNotification(req: Request, res: Response): Promise<void> {
-  const monitor = await Monitor.findById(req.params.id).lean();
-  if (!monitor) throw ApiError.notFound("Monitor not found");
-  const to = (monitor.alertRecipients as string[] | undefined) ?? [];
-  if (!to.length) throw ApiError.badRequest("This monitor has no alert recipients configured");
-
-  await sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url }));
-  await writeAudit(req, "monitor.test_notification", { targetType: "monitor", targetId: req.params.id });
-  res.json({ message: `Test notification sent to ${to.length} recipient(s)`, recipients: to });
-}
-
 /**
- * Headline stats for the monitor detail page (UptimeRobot-style): uptime % across
- * 24h / 7d / 30d windows, response time min/avg/max (last 24h), incident count, and
- * current-state info (up/down since, last check, interval, SSL expiry).
+ * Headline stats for the monitor detail page: uptime % across 24h/7d/30d, response
+ * min/avg/max (24h), incident count, and current-state info.
  */
 export async function monitorSummary(req: Request, res: Response): Promise<void> {
   const id = new Types.ObjectId(req.params.id);
@@ -151,8 +189,8 @@ export async function monitorSummary(req: Request, res: Response): Promise<void>
 
   const monitor = await Monitor.findById(id).lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
+  assertCanReadMonitor(req.user!, monitor);
 
-  // When did the current up/down state begin?
   const down = !!monitor.currentIncidentId;
   let stateSince: Date | null;
   if (down) {

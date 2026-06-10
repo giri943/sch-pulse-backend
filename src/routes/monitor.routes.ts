@@ -1,72 +1,51 @@
 import { Router } from "express";
 import * as MonitorController from "../controllers/Monitor.controller";
-import { authenticate, authorize } from "../middlewares/auth";
+import { authenticate, requirePermission } from "../middlewares/auth";
 import { validate } from "../middlewares/validate";
 import { catchAsync } from "../utils/catchAsync";
 import { idParamSchema, paginationSchema } from "../validations/common.validation";
 import { createMonitorSchema, updateMonitorSchema } from "../validations/monitor.validation";
+import { PERMISSIONS as P } from "../utils/permissions";
 
 const router = Router();
 router.use(authenticate);
 
-router.get("/", validate({ query: paginationSchema }), catchAsync(MonitorController.listMonitors));
+const canRead = requirePermission(P.MONITOR_READ_OWN, P.MONITOR_READ_ALL);
+const canUpdate = requirePermission(P.MONITOR_UPDATE_OWN, P.MONITOR_UPDATE_ALL);
+const canDelete = requirePermission(P.MONITOR_DELETE_OWN, P.MONITOR_DELETE_ALL);
+const canRun = requirePermission(P.MONITOR_RUN_OWN, P.MONITOR_RUN_ALL);
+
+router.get("/", canRead, validate({ query: paginationSchema }), catchAsync(MonitorController.listMonitors));
 router.post(
   "/",
-  authorize("admin", "manager"),
+  requirePermission(P.MONITOR_CREATE),
   validate({ body: createMonitorSchema }),
   catchAsync(MonitorController.createMonitor),
 );
-router.get("/:id", validate({ params: idParamSchema }), catchAsync(MonitorController.getMonitor));
+router.get("/:id", canRead, validate({ params: idParamSchema }), catchAsync(MonitorController.getMonitor));
 router.patch(
   "/:id",
-  authorize("admin", "manager"),
+  canUpdate,
   validate({ params: idParamSchema, body: updateMonitorSchema }),
   catchAsync(MonitorController.updateMonitor),
 );
-router.delete(
-  "/:id",
-  authorize("admin", "manager"),
-  validate({ params: idParamSchema }),
-  catchAsync(MonitorController.deleteMonitor),
-);
-router.post(
-  "/:id/pause",
-  authorize("admin", "manager"),
-  validate({ params: idParamSchema }),
-  catchAsync(MonitorController.pauseMonitor),
-);
-router.post(
-  "/:id/resume",
-  authorize("admin", "manager"),
-  validate({ params: idParamSchema }),
-  catchAsync(MonitorController.resumeMonitor),
-);
-router.post(
-  "/:id/run",
-  authorize("admin", "manager"),
-  validate({ params: idParamSchema }),
-  catchAsync(MonitorController.runMonitor),
-);
+router.delete("/:id", canDelete, validate({ params: idParamSchema }), catchAsync(MonitorController.deleteMonitor));
+router.post("/:id/pause", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.pauseMonitor));
+router.post("/:id/resume", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.resumeMonitor));
+router.post("/:id/run", canRun, validate({ params: idParamSchema }), catchAsync(MonitorController.runMonitor));
 router.post(
   "/:id/test-notification",
-  authorize("admin", "manager"),
+  canRun,
   validate({ params: idParamSchema }),
   catchAsync(MonitorController.testNotification),
 );
 router.get(
   "/:id/checks",
+  canRead,
   validate({ params: idParamSchema, query: paginationSchema }),
   catchAsync(MonitorController.monitorChecks),
 );
-router.get(
-  "/:id/uptime",
-  validate({ params: idParamSchema }),
-  catchAsync(MonitorController.monitorUptime),
-);
-router.get(
-  "/:id/summary",
-  validate({ params: idParamSchema }),
-  catchAsync(MonitorController.monitorSummary),
-);
+router.get("/:id/uptime", canRead, validate({ params: idParamSchema }), catchAsync(MonitorController.monitorUptime));
+router.get("/:id/summary", canRead, validate({ params: idParamSchema }), catchAsync(MonitorController.monitorSummary));
 
 export default router;

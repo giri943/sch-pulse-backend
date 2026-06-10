@@ -1,10 +1,12 @@
-import type { MonitorType, Role } from "./constants";
+import type { MonitorType } from "./constants";
 
 export interface AuthUser {
   id: string;
   email: string;
   name: string;
-  role: Role;
+  roleId: string;
+  roleName: string;
+  permissions: string[];
 }
 
 /** Internal job descriptor passed to a check run (manual or scheduled). */

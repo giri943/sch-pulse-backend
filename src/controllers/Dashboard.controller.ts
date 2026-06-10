@@ -3,6 +3,7 @@ import { Monitor } from "../models/monitor.model";
 import { Incident } from "../models/incident.model";
 import { UptimeStat } from "../models/uptimeStat.model";
 import { SSL_WARN_DAYS, type UptimeRange } from "../utils/constants";
+import { accessibleMonitorIds } from "../utils/access";
 
 const RANGE_MS: Record<UptimeRange, number> = {
   "24h": 24 * 60 * 60 * 1000,
@@ -10,14 +11,24 @@ const RANGE_MS: Record<UptimeRange, number> = {
   "30d": 30 * 24 * 60 * 60 * 1000,
 };
 
-export async function globalStats(_req: Request, res: Response): Promise<void> {
+/** Build { _id/monitorId in ids } clauses, or {} when the user has full access. */
+async function scope(req: Request) {
+  const ids = await accessibleMonitorIds(req.user!);
+  return {
+    monitorFilter: ids === null ? {} : { _id: { $in: ids } },
+    byMonitorId: ids === null ? {} : { monitorId: { $in: ids } },
+  };
+}
+
+export async function globalStats(req: Request, res: Response): Promise<void> {
+  const { monitorFilter, byMonitorId } = await scope(req);
   const from = new Date(Date.now() - RANGE_MS["30d"]);
   const [totalMonitors, monitorsDown, openIncidents, agg] = await Promise.all([
-    Monitor.countDocuments({ enabled: true }),
-    Monitor.countDocuments({ status: "down" }),
-    Incident.countDocuments({ status: "open" }),
+    Monitor.countDocuments({ ...monitorFilter, enabled: true }),
+    Monitor.countDocuments({ ...monitorFilter, status: "down" }),
+    Incident.countDocuments({ ...byMonitorId, status: "open" }),
     UptimeStat.aggregate<{ ups: number; count: number }>([
-      { $match: { bucketStart: { $gte: from } } },
+      { $match: { ...byMonitorId, bucketStart: { $gte: from } } },
       { $group: { _id: null, ups: { $sum: "$ups" }, count: { $sum: "$count" } } },
     ]),
   ]);
@@ -30,10 +41,11 @@ export async function globalStats(_req: Request, res: Response): Promise<void> {
 }
 
 export async function uptimeOverview(req: Request, res: Response): Promise<void> {
+  const { byMonitorId } = await scope(req);
   const range = ((req.query.range as string) || "24h") as UptimeRange;
   const from = new Date(Date.now() - (RANGE_MS[range] ?? RANGE_MS["24h"]));
   const rows = await UptimeStat.aggregate([
-    { $match: { bucketStart: { $gte: from } } },
+    { $match: { ...byMonitorId, bucketStart: { $gte: from } } },
     {
       $group: {
         _id: "$bucketStart",
@@ -54,8 +66,9 @@ export async function uptimeOverview(req: Request, res: Response): Promise<void>
   });
 }
 
-export async function recentIncidents(_req: Request, res: Response): Promise<void> {
-  const data = await Incident.find({})
+export async function recentIncidents(req: Request, res: Response): Promise<void> {
+  const { byMonitorId } = await scope(req);
+  const data = await Incident.find(byMonitorId)
     .sort({ startedAt: -1 })
     .limit(10)
     .populate("monitorId", "name url")
@@ -63,9 +76,10 @@ export async function recentIncidents(_req: Request, res: Response): Promise<voi
   res.json(data);
 }
 
-export async function sslExpiring(_req: Request, res: Response): Promise<void> {
+export async function sslExpiring(req: Request, res: Response): Promise<void> {
+  const { monitorFilter } = await scope(req);
   const horizon = new Date(Date.now() + SSL_WARN_DAYS[0] * 24 * 60 * 60 * 1000);
-  const monitors = await Monitor.find({ sslExpiresAt: { $ne: null, $lte: horizon } })
+  const monitors = await Monitor.find({ ...monitorFilter, sslExpiresAt: { $ne: null, $lte: horizon } })
     .sort({ sslExpiresAt: 1 })
     .lean();
   res.json(
@@ -81,8 +95,9 @@ export async function sslExpiring(_req: Request, res: Response): Promise<void> {
   );
 }
 
-export async function statusBoard(_req: Request, res: Response): Promise<void> {
-  const monitors = await Monitor.find({})
+export async function statusBoard(req: Request, res: Response): Promise<void> {
+  const { monitorFilter } = await scope(req);
+  const monitors = await Monitor.find(monitorFilter)
     .select("name url status lastResponseTimeMs")
     .sort({ status: 1, name: 1 })
     .lean();

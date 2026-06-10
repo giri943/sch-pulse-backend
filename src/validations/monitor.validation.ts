@@ -5,6 +5,7 @@ import {
   MONITOR_INTERVALS_SEC,
   MONITOR_TYPES,
 } from "../utils/constants";
+import { objectId } from "./common.validation";
 
 const intervalSchema = z
   .number()
@@ -29,7 +30,8 @@ const baseMonitor = z.object({
   headers: z.record(z.string()).optional(),
   body: z.string().max(10000).optional(),
   assertions: z.array(assertionSchema).optional(),
-  alertRecipients: z.array(z.string().email()).default([]),
+  members: z.array(objectId).default([]),
+  extraAlertEmails: z.array(z.string().email()).default([]),
   enabled: z.boolean().default(true),
 });
 

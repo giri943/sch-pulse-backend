@@ -5,6 +5,17 @@ import { ApiError } from "../utils/ApiError";
 import { paginate, pageParams } from "../utils/response";
 import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
+import { accessibleMonitorIds, isOwnerOrMember } from "../utils/access";
+import { canWrite } from "../utils/permissions";
+
+/** Load the incident's monitor and 403 unless the user may write to it. */
+async function assertIncidentWritable(req: Request, monitorId: unknown) {
+  const monitor = await Monitor.findById(monitorId).select("createdBy members").lean();
+  if (!monitor) throw ApiError.notFound("Monitor not found");
+  if (!canWrite(req.user!.permissions, "incident", "update", isOwnerOrMember(req.user!, monitor))) {
+    throw ApiError.forbidden("You don't have permission to modify this incident");
+  }
+}
 
 export async function listIncidents(req: Request, res: Response): Promise<void> {
   const { page, limit } = pageParams(req.query);
@@ -12,6 +23,10 @@ export async function listIncidents(req: Request, res: Response): Promise<void> 
   const filter: Record<string, unknown> = {};
   if (q.status) filter.status = q.status;
   if (q.monitorId) filter.monitorId = q.monitorId;
+
+  // Scope to the monitors the user can see.
+  const ids = await accessibleMonitorIds(req.user!);
+  if (ids !== null) filter.monitorId = { $in: ids };
 
   const [data, total] = await Promise.all([
     Incident.find(filter)
@@ -26,21 +41,28 @@ export async function listIncidents(req: Request, res: Response): Promise<void> 
 }
 
 export async function getIncident(req: Request, res: Response): Promise<void> {
-  const incident = await Incident.findById(req.params.id)
-    .populate("monitorId", "name url type")
-    .lean();
+  const incident = await Incident.findById(req.params.id).populate("monitorId", "name url type").lean();
   if (!incident) throw ApiError.notFound("Incident not found");
+
+  const ids = await accessibleMonitorIds(req.user!);
+  if (ids !== null) {
+    const monitorId = (incident.monitorId as { _id?: unknown })?._id ?? incident.monitorId;
+    if (!ids.some((id) => String(id) === String(monitorId))) {
+      throw ApiError.forbidden("You don't have access to this incident");
+    }
+  }
   res.json(incident);
 }
 
 export async function updateIncident(req: Request, res: Response): Promise<void> {
-  const update: Record<string, unknown> = {};
-  if (req.body.rootCauseNotes !== undefined) update.rootCauseNotes = req.body.rootCauseNotes;
-  if (req.body.resolutionNotes !== undefined) update.resolutionNotes = req.body.resolutionNotes;
-  if (req.body.acknowledge) update.acknowledgedBy = req.user!.id;
-
-  const incident = await Incident.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
+  const incident = await Incident.findById(req.params.id);
   if (!incident) throw ApiError.notFound("Incident not found");
+  await assertIncidentWritable(req, incident.monitorId);
+
+  if (req.body.rootCauseNotes !== undefined) incident.rootCauseNotes = req.body.rootCauseNotes;
+  if (req.body.resolutionNotes !== undefined) incident.resolutionNotes = req.body.resolutionNotes;
+  if (req.body.acknowledge) incident.acknowledgedBy = req.user!.id as never;
+  await incident.save();
   await writeAudit(req, "incident.update", { targetType: "incident", targetId: req.params.id });
   res.json(incident);
 }
@@ -48,6 +70,7 @@ export async function updateIncident(req: Request, res: Response): Promise<void>
 export async function resolveIncident(req: Request, res: Response): Promise<void> {
   const incident = await Incident.findById(req.params.id);
   if (!incident) throw ApiError.notFound("Incident not found");
+  await assertIncidentWritable(req, incident.monitorId);
   if (incident.status === "resolved") throw ApiError.badRequest("Incident already resolved");
 
   const resolvedAt = new Date();

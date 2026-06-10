@@ -32,6 +32,10 @@ const envSchema = z.object({
 
   AWS_REGION: z.string().default("ap-south-1"),
   SES_FROM_EMAIL: z.string().email().optional(),
+
+  // Google sign-in (restricted to ALLOWED_EMAIL_DOMAIN)
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  ALLOWED_EMAIL_DOMAIN: z.string().default("schbang.com"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -72,4 +76,5 @@ export const config = {
     },
   },
   aws: { region: env.AWS_REGION, sesFrom: env.SES_FROM_EMAIL ?? env.MAIL_FROM },
+  google: { clientId: env.GOOGLE_CLIENT_ID, allowedDomain: env.ALLOWED_EMAIL_DOMAIN },
 } as const;

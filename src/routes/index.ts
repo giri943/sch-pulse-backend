@@ -1,6 +1,7 @@
 import { Router } from "express";
 import authRoutes from "./auth.routes";
 import userRoutes from "./user.routes";
+import roleRoutes from "./role.routes";
 import monitorRoutes from "./monitor.routes";
 import incidentRoutes from "./incident.routes";
 import recommendationRoutes from "./recommendation.routes";
@@ -13,6 +14,7 @@ const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/users", userRoutes);
+router.use("/roles", roleRoutes);
 router.use("/monitors", monitorRoutes);
 router.use("/incidents", incidentRoutes);
 router.use("/recommendation-rules", recommendationRoutes);

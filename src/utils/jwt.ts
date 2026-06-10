@@ -1,11 +1,9 @@
 import jwt, { type SignOptions } from "jsonwebtoken";
 import { config } from "../config";
-import type { Role } from "./constants";
 
 export interface AccessTokenPayload {
   sub: string;
   email: string;
-  role: Role;
 }
 export interface RefreshTokenPayload {
   sub: string;

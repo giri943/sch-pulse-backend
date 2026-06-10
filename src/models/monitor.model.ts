@@ -28,8 +28,11 @@ const monitorSchema = new Schema(
     headers: { type: Schema.Types.Mixed },
     body: { type: String },
     assertions: { type: [assertionSchema], default: undefined },
-    /** Emails alerted when this monitor goes down / recovers / SSL nears expiry. */
-    alertRecipients: { type: [String], default: [] },
+    /** Owner + tagged users (visibility + alerts). */
+    createdBy: { type: Types.ObjectId, ref: "User", required: true },
+    members: { type: [Types.ObjectId], ref: "User", default: [] },
+    /** Extra non-user emails to also alert (e.g. a client contact). */
+    extraAlertEmails: { type: [String], default: [] },
     enabled: { type: Boolean, default: true },
 
     // ─── runtime state (written by the monitoring service) ───
@@ -50,6 +53,8 @@ monitorSchema.index({ enabled: 1, nextRunAt: 1 });
 monitorSchema.index({ type: 1 });
 monitorSchema.index({ status: 1 });
 monitorSchema.index({ sslExpiresAt: 1 });
+monitorSchema.index({ createdBy: 1 });
+monitorSchema.index({ members: 1 });
 
 export type MonitorDoc = InferSchemaType<typeof monitorSchema>;
 export const Monitor: Model<MonitorDoc> = model<MonitorDoc>("Monitor", monitorSchema);

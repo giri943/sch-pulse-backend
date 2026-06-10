@@ -1,6 +1,7 @@
 import { Check } from "../../models/check.model";
 import { Incident } from "../../models/incident.model";
 import { Monitor } from "../../models/monitor.model";
+import { User } from "../../models/user.model";
 import { FAILURE_THRESHOLD, SSL_WARN_DAYS } from "../../utils/constants";
 import { logger } from "../../config/logger";
 import type { CheckResult, MonitorWithId } from "./types";
@@ -14,9 +15,16 @@ import {
   sslWarningEmail,
 } from "../mailer";
 
-/** Alert recipients live on the monitor itself (monitor-centric model). */
-function alertRecipients(monitor: MonitorWithId): string[] {
-  return (monitor.alertRecipients as string[] | undefined) ?? [];
+/** Alert recipients = tagged members' emails + any extra free-text emails. */
+async function alertRecipients(monitor: MonitorWithId): Promise<string[]> {
+  const memberIds = (monitor.members as unknown[] | undefined) ?? [];
+  let memberEmails: string[] = [];
+  if (memberIds.length) {
+    const users = await User.find({ _id: { $in: memberIds } }).select("email").lean();
+    memberEmails = users.map((u) => u.email);
+  }
+  const extras = (monitor.extraAlertEmails as string[] | undefined) ?? [];
+  return [...new Set([...memberEmails, ...extras])];
 }
 
 /**
@@ -80,7 +88,7 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
 
     await sendEmail(
       incidentOpenedEmail({
-        to: alertRecipients(monitor),
+        to: await alertRecipients(monitor),
         monitorName: monitor.name,
         url: monitor.url,
         error: result.error ?? "Check failed",
@@ -128,7 +136,7 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
 
   await sendEmail(
     incidentResolvedEmail({
-      to: alertRecipients(monitor),
+      to: await alertRecipients(monitor),
       monitorName: monitor.name,
       url: monitor.url,
       downtime: formatDuration(incident.durationSec ?? 0),
@@ -149,7 +157,7 @@ async function handleSslWarnings(monitor: MonitorWithId, expiresAt: Date, now: D
   await Monitor.updateOne({ _id: monitor._id }, { $addToSet: { sslWarnedThresholds: due } });
   await sendEmail(
     sslWarningEmail({
-      to: alertRecipients(monitor),
+      to: await alertRecipients(monitor),
       domain: monitor.url,
       expiresAt: expiresAt.toISOString(),
       daysRemaining,

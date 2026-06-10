@@ -1,31 +1,37 @@
 import { Router } from "express";
 import { z } from "zod";
 import * as UserController from "../controllers/User.controller";
-import { authenticate, authorize } from "../middlewares/auth";
+import { authenticate, requirePermission } from "../middlewares/auth";
 import { validate } from "../middlewares/validate";
 import { catchAsync } from "../utils/catchAsync";
 import { idParamSchema, paginationSchema } from "../validations/common.validation";
 import { passwordSchema } from "../validations/auth.validation";
-import { ROLES, USER_STATUSES } from "../utils/constants";
+import { objectId } from "../validations/common.validation";
+import { USER_STATUSES } from "../utils/constants";
+import { PERMISSIONS as P } from "../utils/permissions";
 
 const createUserSchema = z.object({
   name: z.string().min(2),
   email: z.string().email().toLowerCase(),
   password: passwordSchema,
-  role: z.enum(ROLES).default("viewer"),
+  roleId: objectId,
 });
 const updateUserSchema = z.object({
-  role: z.enum(ROLES).optional(),
+  roleId: objectId.optional(),
   status: z.enum(USER_STATUSES).optional(),
 });
 
 const router = Router();
-router.use(authenticate, authorize("admin"));
+router.use(authenticate);
 
-router.get("/", validate({ query: paginationSchema }), catchAsync(UserController.listUsers));
-router.post("/", validate({ body: createUserSchema }), catchAsync(UserController.createUser));
+// Anyone who can create a monitor can search users to tag them.
+router.get("/search", requirePermission(P.MONITOR_CREATE), catchAsync(UserController.searchUsers));
+
+router.get("/", requirePermission(P.USER_READ), validate({ query: paginationSchema }), catchAsync(UserController.listUsers));
+router.post("/", requirePermission(P.USER_CREATE), validate({ body: createUserSchema }), catchAsync(UserController.createUser));
 router.patch(
   "/:id",
+  requirePermission(P.USER_UPDATE),
   validate({ params: idParamSchema, body: updateUserSchema }),
   catchAsync(UserController.updateUser),
 );

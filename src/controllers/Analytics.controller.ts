@@ -2,6 +2,9 @@ import type { Request, Response } from "express";
 import { Types } from "mongoose";
 import { Incident } from "../models/incident.model";
 import { UptimeStat } from "../models/uptimeStat.model";
+import { Monitor } from "../models/monitor.model";
+import { ApiError } from "../utils/ApiError";
+import { assertCanReadMonitor } from "../utils/access";
 
 const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
 
@@ -34,6 +37,9 @@ async function computeMetrics(match: Record<string, unknown>, incidentMatch: Rec
 }
 
 export async function monitorAnalytics(req: Request, res: Response): Promise<void> {
+  const monitor = await Monitor.findById(req.params.id).select("createdBy members").lean();
+  if (!monitor) throw ApiError.notFound("Monitor not found");
+  assertCanReadMonitor(req.user!, monitor);
   const id = new Types.ObjectId(req.params.id);
   res.json(await computeMetrics({ monitorId: id }, { monitorId: id }));
 }

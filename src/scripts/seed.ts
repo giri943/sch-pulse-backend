@@ -1,12 +1,18 @@
 /**
- * Idempotent seed: first admin user + baseline recommendation rules.
+ * Idempotent seed + migration:
+ *  - system roles (Super Admin, Member) with permissions
+ *  - first super-admin user
+ *  - baseline recommendation rules
+ *  - migrate legacy users (string role) and monitors (no owner / old alertRecipients)
  * Run: npm run seed
  */
-import { config } from "../config";
 import { logger } from "../config/logger";
 import { connectDatabase, disconnectDatabase } from "../config/database";
 import { User } from "../models/user.model";
+import { Monitor } from "../models/monitor.model";
+import { Role, SUPER_ADMIN_ROLE, MEMBER_ROLE } from "../models/role.model";
 import { RecommendationRule } from "../models/recommendationRule.model";
+import { ALL_PERMISSIONS, MEMBER_PERMISSIONS } from "../utils/permissions";
 import { hashPassword } from "../utils/password";
 
 const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@schbang.com";
@@ -24,18 +30,60 @@ const RULES = [
 async function main(): Promise<void> {
   await connectDatabase();
 
-  if (!(await User.findOne({ email: adminEmail }))) {
+  // 1) System roles
+  const superRole = await Role.findOneAndUpdate(
+    { name: SUPER_ADMIN_ROLE },
+    { name: SUPER_ADMIN_ROLE, description: "Full access to everything", permissions: ALL_PERMISSIONS, isSystem: true },
+    { upsert: true, new: true },
+  );
+  const memberRole = await Role.findOneAndUpdate(
+    { name: MEMBER_ROLE },
+    { name: MEMBER_ROLE, description: "Create & manage own / tagged monitors", permissions: MEMBER_PERMISSIONS, isSystem: true },
+    { upsert: true, new: true },
+  );
+  logger.info("✅ System roles ready (Super Admin, Member)");
+
+  // 2) Super-admin user
+  const admin = await User.findOne({ email: adminEmail });
+  if (!admin) {
     await User.create({
       name: "Pulse Admin",
       email: adminEmail,
-      role: "admin",
+      role: superRole!._id,
+      authProvider: "local",
       passwordHash: await hashPassword(adminPassword),
     });
-    logger.info(`✅ Created admin: ${adminEmail}`);
+    logger.info(`✅ Created super admin: ${adminEmail}`);
   } else {
-    logger.info(`Admin already exists: ${adminEmail}`);
+    logger.info(`Super admin already exists: ${adminEmail}`);
+  }
+  const adminUser = await User.findOne({ email: adminEmail });
+
+  // 3) Migrate legacy users whose role is a string enum (admin/manager/viewer)
+  const legacy = await User.find({}).lean();
+  for (const u of legacy) {
+    const r = u.role as unknown;
+    if (typeof r === "string" || !r) {
+      const roleId = r === "admin" ? superRole!._id : memberRole!._id;
+      await User.updateOne({ _id: u._id }, { role: roleId });
+      logger.info(`  migrated user ${u.email} -> ${r === "admin" ? "Super Admin" : "Member"}`);
+    }
   }
 
+  // 4) Migrate monitors: assign owner + convert alertRecipients -> extraAlertEmails
+  if (adminUser) {
+    await Monitor.updateMany({ createdBy: { $exists: false } }, { createdBy: adminUser._id });
+  }
+  const rawMonitors = await Monitor.collection.find({ alertRecipients: { $exists: true } }).toArray();
+  for (const m of rawMonitors) {
+    await Monitor.collection.updateOne(
+      { _id: m._id },
+      { $set: { extraAlertEmails: m.alertRecipients ?? [] }, $unset: { alertRecipients: "" } },
+    );
+  }
+  if (rawMonitors.length) logger.info(`  migrated ${rawMonitors.length} monitor(s) alertRecipients -> extraAlertEmails`);
+
+  // 5) Recommendation rules
   for (const rule of RULES) {
     await RecommendationRule.updateOne(
       { matchType: rule.matchType, matchValue: rule.matchValue },
