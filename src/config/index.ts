@@ -46,6 +46,22 @@ if (!parsed.success) {
 }
 const env = parsed.data;
 
+// Guard against shipping placeholder/weak JWT secrets. Hard-fail in production.
+const WEAK = [env.JWT_ACCESS_SECRET, env.JWT_REFRESH_SECRET].some(
+  (s) => s.length < 32 || /change-?me/i.test(s),
+);
+if (WEAK) {
+  const msg =
+    "⚠️  Weak/default JWT secret detected. Use long random values for JWT_ACCESS_SECRET / JWT_REFRESH_SECRET (>=32 chars).";
+  if (env.NODE_ENV === "production") {
+    // eslint-disable-next-line no-console
+    console.error(msg + " Refusing to start in production.");
+    process.exit(1);
+  }
+  // eslint-disable-next-line no-console
+  console.warn(msg);
+}
+
 export const config = {
   env: env.NODE_ENV,
   isProd: env.NODE_ENV === "production",

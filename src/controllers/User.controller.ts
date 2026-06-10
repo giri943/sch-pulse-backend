@@ -29,10 +29,14 @@ export async function listUsers(req: Request, res: Response): Promise<void> {
   res.json(paginate(data.map(publicUser), total, page, limit));
 }
 
+/** Escape user input before using it in a RegExp (prevents injection / ReDoS). */
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /** Lightweight typeahead for tagging users on a monitor. */
 export async function searchUsers(req: Request, res: Response): Promise<void> {
-  const q = String(req.query.q ?? "").trim();
-  const filter = q ? { $or: [{ name: new RegExp(q, "i") }, { email: new RegExp(q, "i") }] } : {};
+  const q = String(req.query.q ?? "").trim().slice(0, 100);
+  const rx = new RegExp(escapeRegex(q), "i");
+  const filter = q ? { $or: [{ name: rx }, { email: rx }] } : {};
   const users = await User.find({ status: "active", ...filter })
     .select("name email avatarUrl")
     .limit(10)

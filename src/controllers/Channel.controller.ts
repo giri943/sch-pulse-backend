@@ -4,18 +4,24 @@ import { Monitor } from "../models/monitor.model";
 import { ApiError } from "../utils/ApiError";
 import { writeAudit } from "../utils/audit";
 import { postGoogleChat } from "../services/channels";
+import { has, PERMISSIONS } from "../utils/permissions";
 
-const serialize = (c: { _id: unknown; name: string; type: string; webhookUrl: string; enabled: boolean }) => ({
+const serialize = (
+  c: { _id: unknown; name: string; type: string; webhookUrl: string; enabled: boolean },
+  includeSecret: boolean,
+) => ({
   id: String(c._id),
   name: c.name,
   type: c.type,
-  webhookUrl: c.webhookUrl,
+  // The webhook URL is a capability secret — only expose it to channel managers.
+  ...(includeSecret ? { webhookUrl: c.webhookUrl } : {}),
   enabled: c.enabled,
 });
 
-export async function listChannels(_req: Request, res: Response): Promise<void> {
+export async function listChannels(req: Request, res: Response): Promise<void> {
+  const canManage = has(req.user!.permissions, PERMISSIONS.CHANNEL_MANAGE);
   const channels = await NotificationChannel.find({}).sort({ createdAt: -1 }).lean();
-  res.json(channels.map(serialize));
+  res.json(channels.map((c) => serialize(c, canManage)));
 }
 
 export async function createChannel(req: Request, res: Response): Promise<void> {
@@ -27,14 +33,14 @@ export async function createChannel(req: Request, res: Response): Promise<void> 
     createdBy: req.user!.id,
   });
   await writeAudit(req, "channel.create", { targetType: "channel", targetId: channel.id });
-  res.status(201).json(serialize(channel));
+  res.status(201).json(serialize(channel, true));
 }
 
 export async function updateChannel(req: Request, res: Response): Promise<void> {
   const channel = await NotificationChannel.findByIdAndUpdate(req.params.id, req.body, { new: true }).lean();
   if (!channel) throw ApiError.notFound("Channel not found");
   await writeAudit(req, "channel.update", { targetType: "channel", targetId: req.params.id });
-  res.json(serialize(channel));
+  res.json(serialize(channel, true));
 }
 
 export async function deleteChannel(req: Request, res: Response): Promise<void> {
