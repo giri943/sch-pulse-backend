@@ -6,8 +6,13 @@ import { connectDatabase, disconnectDatabase } from "./config/database";
 import { createApp } from "./app";
 import { startMonitoring } from "./services/monitoring";
 import { startLifecycle } from "./services/monitoring/lifecycle";
+import { freePort } from "./utils/freePort";
 
 async function bootstrap(): Promise<void> {
+  // In dev, a hot-reload can leave the previous process holding the port (and
+  // running its crons). Reclaim it before binding — nodemon-style force restart.
+  if (!config.isProd) await freePort(config.port);
+
   await connectDatabase();
 
   const app = createApp();
@@ -33,9 +38,13 @@ async function bootstrap(): Promise<void> {
         process.exit(1);
       }
       if (bindAttempts === 1) {
-        logger.warn(`Port ${config.port} busy — previous instance is still releasing it; retrying…`);
+        logger.warn(`Port ${config.port} busy — reclaiming it from the previous instance…`);
       }
-      setTimeout(() => server.listen(config.port), 500).unref();
+      // Actively kill whatever still holds the port (a dying reload often lingers
+      // a moment after leaving LISTENING), then retry the bind.
+      const retry = () => setTimeout(() => server.listen(config.port), 250).unref();
+      if (!config.isProd) void freePort(config.port).finally(retry);
+      else retry();
       return;
     }
     throw err;
@@ -57,11 +66,10 @@ async function bootstrap(): Promise<void> {
     // Immediately drop keep-alive sockets (e.g. the dashboard's polling) so the
     // port is released right away — otherwise tsx watch's new process hits EADDRINUSE.
     server.closeAllConnections?.();
-    server.close(() => {
-      void disconnectDatabase().finally(() => process.exit(0));
-    });
-    // Hard stop fast so a hot-reload can rebind without waiting.
-    setTimeout(() => process.exit(0), 1500).unref();
+    server.close();
+    void disconnectDatabase().finally(() => process.exit(0));
+    // Hard stop very fast so the OS releases the port for the reloading process.
+    setTimeout(() => process.exit(0), 300).unref();
   };
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));

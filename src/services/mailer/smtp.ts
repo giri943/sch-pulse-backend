@@ -21,6 +21,11 @@ async function getTransporter(): Promise<Transporter> {
       auth: config.mail.smtp.user
         ? { user: config.mail.smtp.user, pass: config.mail.smtp.pass }
         : undefined,
+      // Fail fast instead of hanging ~2 min on nodemailer's default timeouts —
+      // critical on hosts (e.g. Render free tier) that block outbound SMTP.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
     });
     logger.info({ host: config.mail.smtp.host }, "SMTP transport ready");
   } else {

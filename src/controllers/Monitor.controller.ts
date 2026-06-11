@@ -184,24 +184,37 @@ export async function testNotification(req: Request, res: Response): Promise<voi
   if (!to.length && !channelIds.length)
     throw ApiError.badRequest("This monitor has no alert recipients or notification channels configured");
 
-  if (to.length) {
-    await sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url }));
-  }
-  const channelCount = channelIds.length
-    ? await notifyChannels(
-        channelIds as Parameters<typeof notifyChannels>[0],
-        `🔔 Test alert from Schbang Pulse for *${monitor.name}* (${monitor.url}) — alerts are configured correctly. ✅`,
-      )
-    : 0;
+  // Send chat and email independently so one failing transport (e.g. SMTP
+  // blocked on the host) doesn't prevent the other or hang the request.
+  const [emailOk, channelCount] = await Promise.all([
+    to.length
+      ? sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url }))
+      : Promise.resolve(false),
+    channelIds.length
+      ? notifyChannels(
+          channelIds as Parameters<typeof notifyChannels>[0],
+          `🔔 Test alert from Schbang Pulse for *${monitor.name}* (${monitor.url}) — alerts are configured correctly. ✅`,
+        )
+      : Promise.resolve(0),
+  ]);
 
   await writeAudit(req, "monitor.test_notification", { targetType: "monitor", targetId: req.params.id });
-  const parts: string[] = [];
-  if (to.length) parts.push(`${to.length} email recipient(s)`);
-  if (channelCount) parts.push(`${channelCount} chat channel(s)`);
+
+  const sent: string[] = [];
+  if (emailOk) sent.push(`${to.length} email recipient(s)`);
+  if (channelCount) sent.push(`${channelCount} chat channel(s)`);
+  const emailFailed = to.length > 0 && !emailOk;
+  const message = sent.length
+    ? `Test notification sent to ${sent.join(" and ")}` +
+      (emailFailed ? ". Email could not be sent — check the server's mail configuration (the host may block SMTP)." : "")
+    : "Test notification could not be delivered — email failed to send and no chat channels are configured.";
+
   res.json({
-    message: `Test notification sent to ${parts.join(" and ") || "no targets"}`,
+    message,
+    emailSent: emailOk,
     recipients: to,
     channels: channelCount,
+    emailFailed,
   });
 }
 

@@ -15,10 +15,10 @@ export interface EmailMessage {
  * (smtp = nodemailer, ses = AWS SES, console = log only). A send failure is
  * logged but never crashes monitoring.
  */
-export async function sendEmail(msg: EmailMessage): Promise<void> {
+export async function sendEmail(msg: EmailMessage): Promise<boolean> {
   if (!msg.to.length) {
     logger.warn("No alert recipients; skipping email");
-    return;
+    return false;
   }
   try {
     switch (config.mail.driver) {
@@ -31,8 +31,10 @@ export async function sendEmail(msg: EmailMessage): Promise<void> {
       default:
         await sendViaSmtp(msg);
     }
+    return true;
   } catch (err) {
     logger.error({ err, subject: msg.subject }, "Failed to send email");
+    return false;
   }
 }
 
