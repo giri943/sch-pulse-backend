@@ -89,6 +89,23 @@ export function testNotificationEmail(p: {
   };
 }
 
+export function monitorJoinedEmail(p: {
+  to: string[];
+  monitorName: string;
+  url: string;
+  joinerName: string;
+}): EmailMessage {
+  const subject = `[MONITOR JOINED] ${p.monitorName}`;
+  const rows = `<p><b>${p.joinerName}</b> joined monitoring for <b>${p.monitorName}</b> (${p.url}).</p>
+    <p>They'll now receive this monitor's alerts and see it on their dashboard.</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell("👥 New member joined a monitor", rows),
+    text: `${subject}\n${p.joinerName} joined monitoring for ${p.monitorName} (${p.url}).`,
+  };
+}
+
 export function passwordResetEmail(p: { to: string[]; resetUrl: string }): EmailMessage {
   const subject = "Reset your Schbang Pulse password";
   const rows = `<p>We received a request to reset your password.</p>

@@ -16,6 +16,7 @@ const canDelete = requirePermission(P.MONITOR_DELETE_OWN, P.MONITOR_DELETE_ALL);
 const canRun = requirePermission(P.MONITOR_RUN_OWN, P.MONITOR_RUN_ALL);
 
 router.get("/", canRead, validate({ query: paginationSchema }), catchAsync(MonitorController.listMonitors));
+router.get("/discover", requirePermission(P.MONITOR_CREATE), catchAsync(MonitorController.discoverMonitors));
 router.post(
   "/",
   requirePermission(P.MONITOR_CREATE),
@@ -34,6 +35,12 @@ router.post("/:id/pause", canUpdate, validate({ params: idParamSchema }), catchA
 router.post("/:id/resume", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.resumeMonitor));
 router.post("/:id/run", canRun, validate({ params: idParamSchema }), catchAsync(MonitorController.runMonitor));
 router.post("/:id/restore", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.restoreMonitor));
+router.post(
+  "/:id/join",
+  requirePermission(P.MONITOR_CREATE),
+  validate({ params: idParamSchema }),
+  catchAsync(MonitorController.joinMonitor),
+);
 router.post(
   "/:id/test-notification",
   canRun,

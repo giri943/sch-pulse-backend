@@ -9,13 +9,15 @@ import { ApiError } from "../utils/ApiError";
 import { paginate, pageParams } from "../utils/response";
 import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
-import { sendEmail, testNotificationEmail } from "../services/mailer";
+import { sendEmail, testNotificationEmail, monitorJoinedEmail } from "../services/mailer";
 import { notifyChannels } from "../services/channels";
 import {
   assertCanReadMonitor,
   assertCanWriteMonitor,
+  isOwnerOrMember,
   monitorScopeFilter,
 } from "../utils/access";
+import { normalizeUrl } from "../utils/url";
 import type { UptimeRange } from "../utils/constants";
 
 const RANGE_MS: Record<UptimeRange, number> = {
@@ -55,6 +57,16 @@ async function recipientsFor(monitor: { members?: unknown[]; extraAlertEmails?: 
 }
 
 export async function createMonitor(req: Request, res: Response): Promise<void> {
+  // Duplicate monitors are not allowed — one monitor per target (normalized
+  // URL), org-wide. If a monitor already exists, the user must join it instead.
+  const dup = await findDuplicateMonitor(String(req.body.url ?? ""));
+  if (dup) {
+    const alreadyMember = isOwnerOrMember(req.user!, dup);
+    throw new ApiError(409, "A monitor already exists for this URL.", "DUPLICATE_MONITOR", {
+      existing: { id: String(dup._id), name: dup.name, url: dup.url, alreadyMember },
+    });
+  }
+
   const monitor = await Monitor.create({
     ...req.body,
     createdBy: req.user!.id,
@@ -67,6 +79,100 @@ export async function createMonitor(req: Request, res: Response): Promise<void> 
     metadata: { name: monitor.name, url: monitor.url },
   });
   res.status(201).json(monitor);
+}
+
+/**
+ * Find an existing, non-archived monitor whose URL normalizes to the same key.
+ * Narrows candidates by host (cheap), then compares normalized keys exactly.
+ */
+async function findDuplicateMonitor(url: string) {
+  const key = normalizeUrl(url);
+  let host = "";
+  try {
+    host = new URL(url.trim()).hostname;
+  } catch {
+    host = url.trim();
+  }
+  if (!host) return null;
+  const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const candidates = await Monitor.find({
+    softDeletedAt: null,
+    url: new RegExp(escaped, "i"),
+  })
+    .select("name url members createdBy")
+    .lean();
+  return candidates.find((m) => normalizeUrl(m.url) === key) ?? null;
+}
+
+/**
+ * Search monitors org-wide so a user can discover and join one they're not on
+ * yet. Returns minimal, non-sensitive fields only. Matches name or URL.
+ */
+export async function discoverMonitors(req: Request, res: Response): Promise<void> {
+  const q = String((req.query.q as string) ?? "").trim();
+  const filter: Record<string, unknown> = { softDeletedAt: null };
+  if (q) {
+    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    filter.$or = [{ name: rx }, { url: rx }];
+  }
+  const monitors = await Monitor.find(filter)
+    .select("name url type status members createdBy")
+    .sort({ name: 1 })
+    .limit(25)
+    .lean();
+  const data = monitors.map((m) => ({
+    id: String(m._id),
+    name: m.name,
+    url: m.url,
+    type: m.type,
+    status: m.status,
+    memberCount: (m.members as unknown[] | undefined)?.length ?? 0,
+    alreadyMember: isOwnerOrMember(req.user!, m),
+  }));
+  res.json({ data });
+}
+
+/** Join an existing monitor: add the current user to its members (visibility + alerts). */
+export async function joinMonitor(req: Request, res: Response): Promise<void> {
+  const monitor = await Monitor.findById(req.params.id);
+  if (!monitor || monitor.softDeletedAt) throw ApiError.notFound("Monitor not found");
+
+  const uid = req.user!.id;
+  let joined = false;
+  if (!isOwnerOrMember(req.user!, monitor)) {
+    monitor.members.push(new Types.ObjectId(uid));
+    await monitor.save();
+    joined = true;
+    await writeAudit(req, "monitor.join", {
+      targetType: "monitor",
+      targetId: String(monitor._id),
+      metadata: { name: monitor.name, url: monitor.url },
+    });
+  }
+
+  if (joined) {
+    // Notify just the owner and the joiner (not the whole team).
+    const people = await User.find({ _id: { $in: [monitor.createdBy, new Types.ObjectId(uid)] } })
+      .select("email name googleId")
+      .lean();
+    const to = [...new Set(people.map((p) => p.email).filter(Boolean))];
+    const mentions = people
+      .filter((p) => p.googleId)
+      .map((p) => `<users/${p.googleId}>`)
+      .join(" ");
+    const joinerName = req.user!.name || req.user!.email;
+    void sendEmail(monitorJoinedEmail({ to, monitorName: monitor.name, url: monitor.url, joinerName }));
+    void notifyChannels(
+      monitor.channels as unknown[] | undefined,
+      `${mentions ? mentions + "\n" : ""}👥 *${joinerName}* joined monitoring for *${monitor.name}* (${monitor.url}).`,
+    );
+  }
+
+  const populated = await Monitor.findById(monitor._id)
+    .populate("members", "name email avatarUrl")
+    .populate("channels", "name type")
+    .lean();
+  res.json(serializeMonitor(populated!));
 }
 
 export async function listMonitors(req: Request, res: Response): Promise<void> {
