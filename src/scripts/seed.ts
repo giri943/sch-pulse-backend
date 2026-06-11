@@ -12,7 +12,7 @@ import { User } from "../models/user.model";
 import { Monitor } from "../models/monitor.model";
 import { Role, SUPER_ADMIN_ROLE, MEMBER_ROLE } from "../models/role.model";
 import { RecommendationRule } from "../models/recommendationRule.model";
-import { ALL_PERMISSIONS, MEMBER_PERMISSIONS } from "../utils/permissions";
+import { WILDCARD, MEMBER_PERMISSIONS } from "../utils/permissions";
 import { hashPassword } from "../utils/password";
 
 const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@schbang.com";
@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   // 1) System roles
   const superRole = await Role.findOneAndUpdate(
     { name: SUPER_ADMIN_ROLE },
-    { name: SUPER_ADMIN_ROLE, description: "Full access to everything", permissions: ALL_PERMISSIONS, isSystem: true },
+    { name: SUPER_ADMIN_ROLE, description: "Full access to everything", permissions: [WILDCARD], isSystem: true },
     { upsert: true, new: true },
   );
   const memberRole = await Role.findOneAndUpdate(

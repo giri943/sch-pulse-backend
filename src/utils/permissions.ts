@@ -118,11 +118,22 @@ export const MEMBER_PERMISSIONS: Permission[] = [
   PERMISSIONS.CHANNEL_READ,
 ];
 
-export const has = (perms: string[], key: Permission): boolean => perms.includes(key);
+/**
+ * Wildcard permission — grants everything, including permissions added in the
+ * future. Held only by the Super Admin system role. It is intentionally NOT in
+ * the catalog, so it can never be granted to a custom role via the API/UI
+ * (sanitize() drops anything not in ALL_PERMISSIONS).
+ */
+export const WILDCARD = "*";
+
+export const isSuperAdmin = (perms: string[]): boolean => perms.includes(WILDCARD);
+
+export const has = (perms: string[], key: Permission): boolean =>
+  perms.includes(WILDCARD) || perms.includes(key);
 
 /** Read scope for a resource: "all" beats "own". null = no access. */
 export function readScope(perms: string[], resource: "monitor" | "incident"): "all" | "own" | null {
-  if (perms.includes(`${resource}:read:all`)) return "all";
+  if (perms.includes(WILDCARD) || perms.includes(`${resource}:read:all`)) return "all";
   if (perms.includes(`${resource}:read:own`)) return "own";
   return null;
 }
@@ -134,7 +145,7 @@ export function canWrite(
   action: "update" | "delete" | "run",
   isOwner: boolean,
 ): boolean {
-  if (perms.includes(`${resource}:${action}:all`)) return true;
+  if (perms.includes(WILDCARD) || perms.includes(`${resource}:${action}:all`)) return true;
   if (perms.includes(`${resource}:${action}:own`)) return isOwner;
   return false;
 }

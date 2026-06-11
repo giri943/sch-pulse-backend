@@ -7,6 +7,7 @@ import { createApp } from "./app";
 import { startMonitoring } from "./services/monitoring";
 import { startLifecycle } from "./services/monitoring/lifecycle";
 import { freePort } from "./utils/freePort";
+import { ensureSystemRoles } from "./utils/systemRoles";
 
 async function bootstrap(): Promise<void> {
   // In dev, a hot-reload can leave the previous process holding the port (and
@@ -14,6 +15,7 @@ async function bootstrap(): Promise<void> {
   if (!config.isProd) await freePort(config.port);
 
   await connectDatabase();
+  await ensureSystemRoles();
 
   const app = createApp();
   const server = http.createServer(app);

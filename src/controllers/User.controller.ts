@@ -3,6 +3,7 @@ import { User } from "../models/user.model";
 import { Role } from "../models/role.model";
 import { ApiError } from "../utils/ApiError";
 import { hashPassword } from "../utils/password";
+import { WILDCARD } from "../utils/permissions";
 import { paginate, pageParams } from "../utils/response";
 import { skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
@@ -64,6 +65,19 @@ export async function createUser(req: Request, res: Response): Promise<void> {
 }
 
 export async function updateUser(req: Request, res: Response): Promise<void> {
+  const target = await User.findById(req.params.id).populate<{ role: { _id: unknown; permissions?: string[] } }>(
+    "role",
+    "permissions",
+  );
+  if (!target) throw ApiError.notFound("User not found");
+
+  // Self-protection: you can't change your own role or status (prevents
+  // self-lockout and self-escalation; another admin must do it).
+  const isSelf = String(target._id) === req.user!.id;
+  if (isSelf && (req.body.roleId || req.body.status)) {
+    throw ApiError.badRequest("You can't change your own role or status. Ask another administrator.");
+  }
+
   const update: Record<string, unknown> = {};
   if (req.body.roleId) {
     if (!(await Role.findById(req.body.roleId))) throw ApiError.badRequest("Invalid role");
@@ -71,8 +85,29 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
   }
   if (req.body.status) update.status = req.body.status;
 
+  // Last-Super-Admin protection: don't allow demoting or disabling the only
+  // remaining active Super Admin — that would lock everyone out of admin.
+  const targetIsSuperAdmin = (target.role?.permissions ?? []).includes(WILDCARD);
+  if (targetIsSuperAdmin) {
+    let losesAdmin = req.body.status === "disabled";
+    if (req.body.roleId) {
+      const newRole = await Role.findById(req.body.roleId).lean();
+      if (!(newRole?.permissions ?? []).includes(WILDCARD)) losesAdmin = true;
+    }
+    if (losesAdmin && (await countActiveSuperAdmins()) <= 1) {
+      throw ApiError.badRequest("Cannot remove the last Super Admin. Assign another Super Admin first.");
+    }
+  }
+
   const user = await User.findByIdAndUpdate(req.params.id, update, { new: true }).populate("role", "name").lean();
   if (!user) throw ApiError.notFound("User not found");
   await writeAudit(req, "user.update", { targetType: "user", targetId: req.params.id });
   res.json(publicUser(user));
+}
+
+/** Count active users whose role carries the wildcard (Super Admin) permission. */
+async function countActiveSuperAdmins(): Promise<number> {
+  const wildcardRoles = await Role.find({ permissions: WILDCARD }).select("_id").lean();
+  if (!wildcardRoles.length) return 0;
+  return User.countDocuments({ role: { $in: wildcardRoles.map((r) => r._id) }, status: "active" });
 }
