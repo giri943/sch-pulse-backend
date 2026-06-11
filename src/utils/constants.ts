@@ -22,8 +22,8 @@ export const MONITOR_INTERVALS_SEC = [60, 300, 900, 1800] as const;
 export const INCIDENT_STATUSES = ["open", "resolved"] as const;
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
-/** Consecutive failures required before an incident is opened. */
-export const FAILURE_THRESHOLD = 3;
+/** Consecutive failures required before an incident is opened (and alerts fire). */
+export const FAILURE_THRESHOLD = 2;
 
 /** SSL expiry warning thresholds in days. */
 export const SSL_WARN_DAYS = [30, 15, 7] as const;

@@ -9,6 +9,7 @@ import { logger } from "../config/logger";
 import { hashPassword, verifyPassword } from "../utils/password";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/jwt";
 import { writeAudit } from "../utils/audit";
+import { sendEmail, passwordResetEmail } from "../services/mailer";
 
 const REFRESH_COOKIE = "pulse_rt";
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -160,7 +161,14 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
     user.set("resetPasswordToken", createHash("sha256").update(rawToken).digest("hex"));
     user.set("resetPasswordExpires", new Date(Date.now() + RESET_TOKEN_TTL_MS));
     await user.save();
-    if (!config.isProd) logger.info(`[dev] reset link: ${config.appBaseUrl}/reset-password?token=${rawToken}`);
+    const resetUrl = `${config.appBaseUrl}/reset-password?token=${rawToken}`;
+    if (!config.isProd) logger.info(`[dev] reset link: ${resetUrl}`);
+    // Send asynchronously; a mail failure must not reveal whether the email exists.
+    try {
+      await sendEmail(passwordResetEmail({ to: [user.email], resetUrl }));
+    } catch (err) {
+      logger.error({ err }, "Failed to send password reset email");
+    }
   }
   res.json({ message: "If the email exists, a reset link has been sent." });
 }

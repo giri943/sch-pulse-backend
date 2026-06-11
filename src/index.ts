@@ -1,3 +1,4 @@
+import http from "node:http";
 import type { ScheduledTask } from "node-cron";
 import { config } from "./config";
 import { logger } from "./config/logger";
@@ -10,21 +11,37 @@ async function bootstrap(): Promise<void> {
   await connectDatabase();
 
   const app = createApp();
-  const server = app.listen(config.port, () => {
+  const server = http.createServer(app);
+
+  server.on("listening", () => {
     logger.info(`🚀 Schbang Pulse backend on :${config.port} (${config.env}) — mail: ${config.mail.driver}`);
   });
 
-  // Friendly message instead of an ugly crash if the port is already taken.
+  // On a hot-reload, tsx watch may start this process before the previous one
+  // has finished releasing the port. Instead of crashing, patiently retry the
+  // bind — the old instance shuts down fast (below) and frees it within ~1s.
+  const MAX_BIND_RETRIES = 20; // ~10s at 500ms — covers any reload race
+  let bindAttempts = 0;
   server.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
-      logger.error(
-        `Port ${config.port} is already in use — another backend instance is still running. ` +
-          `Stop it first (npm run kill-port), or it will free up momentarily on restart.`,
-      );
-      process.exit(1);
+      bindAttempts += 1;
+      if (bindAttempts > MAX_BIND_RETRIES) {
+        logger.error(
+          `Port ${config.port} still in use after ${MAX_BIND_RETRIES} attempts (~10s). ` +
+            `Another backend is likely running — stop it with: npm run kill-port`,
+        );
+        process.exit(1);
+      }
+      if (bindAttempts === 1) {
+        logger.warn(`Port ${config.port} busy — previous instance is still releasing it; retrying…`);
+      }
+      setTimeout(() => server.listen(config.port), 500).unref();
+      return;
     }
     throw err;
   });
+
+  server.listen(config.port);
 
   // In-process crons (no AWS): monitoring checks (every ~20s) + lifecycle (hourly).
   const monitoringTask: ScheduledTask = startMonitoring();

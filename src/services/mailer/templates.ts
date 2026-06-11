@@ -89,6 +89,20 @@ export function testNotificationEmail(p: {
   };
 }
 
+export function passwordResetEmail(p: { to: string[]; resetUrl: string }): EmailMessage {
+  const subject = "Reset your Schbang Pulse password";
+  const rows = `<p>We received a request to reset your password.</p>
+    <p><a href="${p.resetUrl}" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;margin-top:8px">Reset password</a></p>
+    <p style="color:#6b7280;font-size:12px;margin-top:16px">This link expires in 1 hour. If you didn't request this, you can ignore this email.</p>
+    <p style="color:#6b7280;font-size:12px;word-break:break-all">${p.resetUrl}</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell("🔑 Password reset", rows),
+    text: `Reset your Schbang Pulse password:\n${p.resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, ignore this email.`,
+  };
+}
+
 export function monitorExpiringEmail(p: {
   to: string[];
   monitorName: string;

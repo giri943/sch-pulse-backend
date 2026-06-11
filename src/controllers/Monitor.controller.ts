@@ -10,6 +10,7 @@ import { paginate, pageParams } from "../utils/response";
 import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
 import { sendEmail, testNotificationEmail } from "../services/mailer";
+import { notifyChannels } from "../services/channels";
 import {
   assertCanReadMonitor,
   assertCanWriteMonitor,
@@ -179,11 +180,29 @@ export async function testNotification(req: Request, res: Response): Promise<voi
   assertCanWriteMonitor(req.user!, monitor, "run");
 
   const to = await recipientsFor(monitor);
-  if (!to.length) throw ApiError.badRequest("This monitor has no alert recipients configured");
+  const channelIds = (monitor.channels as unknown[] | undefined) ?? [];
+  if (!to.length && !channelIds.length)
+    throw ApiError.badRequest("This monitor has no alert recipients or notification channels configured");
 
-  await sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url }));
+  if (to.length) {
+    await sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url }));
+  }
+  const channelCount = channelIds.length
+    ? await notifyChannels(
+        channelIds as Parameters<typeof notifyChannels>[0],
+        `🔔 Test alert from Schbang Pulse for *${monitor.name}* (${monitor.url}) — alerts are configured correctly. ✅`,
+      )
+    : 0;
+
   await writeAudit(req, "monitor.test_notification", { targetType: "monitor", targetId: req.params.id });
-  res.json({ message: `Test notification sent to ${to.length} recipient(s)`, recipients: to });
+  const parts: string[] = [];
+  if (to.length) parts.push(`${to.length} email recipient(s)`);
+  if (channelCount) parts.push(`${channelCount} chat channel(s)`);
+  res.json({
+    message: `Test notification sent to ${parts.join(" and ") || "no targets"}`,
+    recipients: to,
+    channels: channelCount,
+  });
 }
 
 export async function monitorChecks(req: Request, res: Response): Promise<void> {

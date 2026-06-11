@@ -24,14 +24,15 @@ export async function postGoogleChat(webhookUrl: string, text: string): Promise<
  * Fan a message out to a monitor's enabled channels. Never throws — channel
  * failures must not break monitoring.
  */
-export async function notifyChannels(channelIds: unknown[] | undefined, text: string): Promise<void> {
-  if (!channelIds?.length) return;
+export async function notifyChannels(channelIds: unknown[] | undefined, text: string): Promise<number> {
+  if (!channelIds?.length) return 0;
   try {
     const channels = await NotificationChannel.find({ _id: { $in: channelIds }, enabled: true }).lean();
-    await Promise.all(
-      channels.map((c) => (c.type === "google_chat" && c.webhookUrl ? postGoogleChat(c.webhookUrl, text) : Promise.resolve())),
-    );
+    const dispatched = channels.filter((c) => c.type === "google_chat" && c.webhookUrl);
+    await Promise.all(dispatched.map((c) => postGoogleChat(c.webhookUrl!, text)));
+    return dispatched.length;
   } catch (err) {
     logger.error({ err }, "Failed to dispatch channel notifications");
+    return 0;
   }
 }
