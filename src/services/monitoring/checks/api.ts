@@ -49,7 +49,10 @@ export async function apiCheck(monitor: MonitorWithId): Promise<CheckResult> {
     });
     const responseTimeMs = Date.now() - start;
     const expected = monitor.expectedStatusCode ?? 200;
-    let up = res.status === expected;
+    // Match the website check: when expected is left at the default 200, treat
+    // any 2xx as healthy (e.g. a /_health endpoint returning 204). A specific
+    // non-200 expected (e.g. 204, 301) is still matched exactly.
+    let up = res.status === expected || (expected === 200 && res.status >= 200 && res.status < 300);
     let error: string | null = up ? null : `Unexpected status ${res.status}`;
 
     const assertions = (monitor.assertions as Assertion[] | undefined) ?? [];
