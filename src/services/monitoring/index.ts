@@ -65,13 +65,15 @@ export async function tick(): Promise<void> {
       .lean()) as MonitorWithId[];
     if (!due.length) return;
 
-    await Promise.all(
-      due.map((m) =>
-        Monitor.updateOne(
-          { _id: m._id },
-          { nextRunAt: new Date(now.getTime() + (m.intervalSec ?? 300) * 1000) },
-        ),
-      ),
+    // Advance every due monitor's nextRunAt in a single round-trip (was one
+    // updateOne per monitor — N round-trips per tick).
+    await Monitor.bulkWrite(
+      due.map((m) => ({
+        updateOne: {
+          filter: { _id: m._id },
+          update: { nextRunAt: new Date(now.getTime() + (m.intervalSec ?? 300) * 1000) },
+        },
+      })),
     );
     await runPool(due, config.scheduler.concurrency, runCheck);
     logger.info({ count: due.length }, "Scheduler processed due monitors");

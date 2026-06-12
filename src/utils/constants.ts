@@ -1,11 +1,5 @@
-export const ROLES = ["admin", "manager", "viewer"] as const;
-export type Role = (typeof ROLES)[number];
-
 export const USER_STATUSES = ["active", "disabled"] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
-
-export const PROJECT_STATUSES = ["active", "paused", "archived"] as const;
-export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
 export const MONITOR_TYPES = ["website", "api", "ssl"] as const;
 export type MonitorType = (typeof MONITOR_TYPES)[number];

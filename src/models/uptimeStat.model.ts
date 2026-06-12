@@ -15,6 +15,8 @@ const uptimeStatSchema = new Schema(
 );
 
 uptimeStatSchema.index({ monitorId: 1, bucketStart: 1 }, { unique: true });
+// Dashboard/analytics roll up across monitors by time window — index bucketStart alone.
+uptimeStatSchema.index({ bucketStart: 1 });
 
 export type UptimeStatDoc = InferSchemaType<typeof uptimeStatSchema>;
 export const UptimeStat: Model<UptimeStatDoc> = model<UptimeStatDoc>("UptimeStat", uptimeStatSchema);

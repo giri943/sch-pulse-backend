@@ -4,6 +4,7 @@ import { sendViaSmtp } from "./smtp";
 import { sendViaSes } from "./ses";
 import { sendViaSendgrid } from "./sendgrid";
 import { sendViaMailjet } from "./mailjet";
+import { sendViaBrevo } from "./brevo";
 
 export interface EmailMessage {
   to: string[];
@@ -39,6 +40,9 @@ export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
         break;
       case "mailjet":
         await sendViaMailjet(msg);
+        break;
+      case "brevo":
+        await sendViaBrevo(msg);
         break;
       case "console":
         logger.info({ to: msg.to, subject: msg.subject, body: msg.text }, "📧 Email (console driver)");

@@ -21,11 +21,12 @@ const envSchema = z.object({
   SCHEDULER_CRON: z.string().default("*/20 * * * * *"),
   CHECK_CONCURRENCY: z.coerce.number().int().min(1).default(10),
 
-  MAIL_DRIVER: z.enum(["smtp", "ses", "sendgrid", "mailjet", "console"]).default("smtp"),
+  MAIL_DRIVER: z.enum(["smtp", "ses", "sendgrid", "mailjet", "brevo", "console"]).default("smtp"),
   MAIL_FROM: z.string().default("alerts@schbang.com"),
   SENDGRID_API_KEY: z.string().optional(),
   MAILJET_API_KEY: z.string().optional(),
   MAILJET_SECRET_KEY: z.string().optional(),
+  BREVO_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().default(587),
   SMTP_SECURE: z
@@ -89,6 +90,7 @@ export const config = {
     driver: env.MAIL_DRIVER,
     from: env.MAIL_FROM,
     sendgridApiKey: env.SENDGRID_API_KEY,
+    brevoApiKey: env.BREVO_API_KEY,
     mailjet: { apiKey: env.MAILJET_API_KEY, secretKey: env.MAILJET_SECRET_KEY },
     smtp: {
       host: env.SMTP_HOST,
