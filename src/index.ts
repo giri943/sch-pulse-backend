@@ -1,3 +1,10 @@
+import dns from "node:dns";
+// Prefer IPv4 for all outbound connections. Some cloud egress paths (e.g. Render)
+// have a broken IPv6 route to certain hosts, which surfaces as
+// "fetch failed: read ECONNRESET" when calling HTTPS APIs like Mailjet. Resolving
+// IPv4-first avoids that bad path. Must run before any fetch/DNS lookup.
+dns.setDefaultResultOrder("ipv4first");
+
 import http from "node:http";
 import type { ScheduledTask } from "node-cron";
 import { config } from "./config";
