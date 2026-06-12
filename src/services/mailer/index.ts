@@ -2,6 +2,8 @@ import { config } from "../../config";
 import { logger } from "../../config/logger";
 import { sendViaSmtp } from "./smtp";
 import { sendViaSes } from "./ses";
+import { sendViaSendgrid } from "./sendgrid";
+import { sendViaMailjet } from "./mailjet";
 
 export interface EmailMessage {
   to: string[];
@@ -12,18 +14,31 @@ export interface EmailMessage {
 
 /**
  * Single entry point for all notifications. Transport chosen by MAIL_DRIVER
- * (smtp = nodemailer, ses = AWS SES, console = log only). A send failure is
+ * (smtp = nodemailer, ses = AWS SES, sendgrid = SendGrid HTTP API,
+ * mailjet = Mailjet HTTP API, console = log only). A send failure is
  * logged but never crashes monitoring.
  */
-export async function sendEmail(msg: EmailMessage): Promise<boolean> {
+export interface SendResult {
+  ok: boolean;
+  /** Human-readable reason when ok=false (surfaced by the Test-notification endpoint). */
+  error?: string;
+}
+
+export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
   if (!msg.to.length) {
     logger.warn("No alert recipients; skipping email");
-    return false;
+    return { ok: false, error: "No recipients" };
   }
   try {
     switch (config.mail.driver) {
       case "ses":
         await sendViaSes(msg);
+        break;
+      case "sendgrid":
+        await sendViaSendgrid(msg);
+        break;
+      case "mailjet":
+        await sendViaMailjet(msg);
         break;
       case "console":
         logger.info({ to: msg.to, subject: msg.subject, body: msg.text }, "📧 Email (console driver)");
@@ -31,10 +46,11 @@ export async function sendEmail(msg: EmailMessage): Promise<boolean> {
       default:
         await sendViaSmtp(msg);
     }
-    return true;
+    return { ok: true };
   } catch (err) {
-    logger.error({ err, subject: msg.subject }, "Failed to send email");
-    return false;
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error({ err, driver: config.mail.driver, from: config.mail.from, subject: msg.subject }, "Failed to send email");
+    return { ok: false, error: `[${config.mail.driver}] ${error}` };
   }
 }
 

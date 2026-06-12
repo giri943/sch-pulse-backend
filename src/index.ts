@@ -21,7 +21,9 @@ async function bootstrap(): Promise<void> {
   const server = http.createServer(app);
 
   server.on("listening", () => {
-    logger.info(`🚀 Schbang Pulse backend on :${config.port} (${config.env}) — mail: ${config.mail.driver}`);
+    logger.info(
+      `🚀 Schbang Pulse backend on :${config.port} (${config.env}) — mail: ${config.mail.driver} from <${config.mail.from}>`,
+    );
   });
 
   // On a hot-reload, tsx watch may start this process before the previous one
