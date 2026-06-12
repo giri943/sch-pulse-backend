@@ -10,7 +10,9 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(8),
   ACCESS_TOKEN_TTL: z.string().default("15m"),
   REFRESH_TOKEN_TTL: z.string().default("7d"),
-  COOKIE_DOMAIN: z.string().default("localhost"),
+  // Leave unset for cross-domain deploys (Vercel frontend + Render backend) — the
+  // refresh cookie then lives on the backend host. Only set for shared parent domains.
+  COOKIE_DOMAIN: z.string().optional(),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   APP_BASE_URL: z.string().default("http://localhost:3000"),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().default(60_000),

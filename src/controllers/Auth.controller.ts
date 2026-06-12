@@ -17,8 +17,13 @@ const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const refreshCookieOptions: CookieOptions = {
   httpOnly: true,
   secure: config.isProd,
-  sameSite: "lax",
-  domain: config.cookieDomain,
+  // Frontend (Vercel) and backend (Render) are on different domains in prod, so
+  // the refresh cookie is cross-site and MUST be SameSite=None + Secure to be
+  // sent. Locally (http) we use Lax, since None requires Secure.
+  sameSite: config.isProd ? "none" : "lax",
+  // Only scope to a domain if explicitly configured — a stale "localhost" value
+  // would make the browser drop the cookie on the real backend host.
+  ...(config.cookieDomain ? { domain: config.cookieDomain } : {}),
   path: "/api/v1/auth",
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
