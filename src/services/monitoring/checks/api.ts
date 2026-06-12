@@ -37,7 +37,13 @@ export async function apiCheck(monitor: MonitorWithId): Promise<CheckResult> {
     const method = monitor.method ?? "GET";
     const res = await fetch(monitor.url, {
       method,
-      headers: (monitor.headers as Record<string, string>) ?? undefined,
+      // Default UA/Accept so CDN/bot filters (e.g. Cloudflare) respond as they do
+      // to Postman/browsers; the monitor's own headers override these.
+      headers: {
+        "User-Agent": "SchbangPulse/1.0 (+uptime-monitor)",
+        Accept: "*/*",
+        ...((monitor.headers as Record<string, string>) ?? {}),
+      },
       body: method !== "GET" && method !== "HEAD" ? (monitor.body ?? undefined) : undefined,
       signal: controller.signal,
     });
