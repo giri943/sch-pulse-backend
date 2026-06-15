@@ -33,7 +33,8 @@ export async function globalStats(req: Request, res: Response): Promise<void> {
     ]),
   ]);
   const a = agg[0];
-  const uptime30d = a && a.count ? Number(((a.ups / a.count) * 100).toFixed(2)) : 100;
+  // null (not 100) when there's no data yet — never report a fake 100%.
+  const uptime30d = a && a.count ? Number(((a.ups / a.count) * 100).toFixed(2)) : null;
   res.json({
     stats: { totalMonitors, monitorsDown, openIncidents, uptime30d },
     generatedAt: new Date().toISOString(),

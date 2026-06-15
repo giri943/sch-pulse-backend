@@ -58,9 +58,12 @@ export async function login(req: Request, res: Response): Promise<void> {
   const user = await User.findOne({ email })
     .select("+passwordHash +tokenVersion")
     .populate<{ role: PopulatedRole }>("role", "name permissions");
-  if (!user || user.status !== "active") throw ApiError.unauthorized("Invalid credentials");
-  if (!user.passwordHash) throw ApiError.unauthorized("This account uses Google sign-in");
-  if (!(await verifyPassword(password, user.passwordHash))) throw ApiError.unauthorized("Invalid credentials");
+  if (!user) throw ApiError.unauthorized("No account found with that email");
+  if (user.status !== "active") throw ApiError.unauthorized("This account has been disabled");
+  if (!user.passwordHash)
+    throw ApiError.unauthorized('This account uses Google sign-in — use "Continue with Google".');
+  if (!(await verifyPassword(password, user.passwordHash)))
+    throw ApiError.unauthorized("Incorrect password");
 
   user.lastLoginAt = new Date();
   await user.save();
@@ -196,7 +199,10 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
 }
 
 export async function me(req: Request, res: Response): Promise<void> {
-  const user = await User.findById(req.user!.id).populate<{ role: PopulatedRole }>("role", "name permissions").lean();
+  const user = await User.findById(req.user!.id)
+    .select("+passwordHash")
+    .populate<{ role: PopulatedRole }>("role", "name permissions")
+    .lean();
   if (!user) throw ApiError.unauthorized();
   const role = user.role as unknown as PopulatedRole;
   res.json({
@@ -204,7 +210,19 @@ export async function me(req: Request, res: Response): Promise<void> {
     name: user.name,
     email: user.email,
     avatarUrl: user.avatarUrl ?? null,
+    authProvider: user.authProvider ?? "local",
+    hasPassword: !!user.passwordHash,
     role: { id: String(role._id), name: role.name },
     permissions: role.permissions ?? [],
   });
+}
+
+/** Set/replace the current user's password (e.g. a Google user enabling email login). */
+export async function setPassword(req: Request, res: Response): Promise<void> {
+  const user = await User.findById(req.user!.id).select("+passwordHash");
+  if (!user) throw ApiError.unauthorized();
+  user.passwordHash = await hashPassword(req.body.password);
+  await user.save();
+  await writeAudit(req, "user.set_password", { targetType: "user" });
+  res.json({ message: "Password set — you can now sign in with your email and password." });
 }

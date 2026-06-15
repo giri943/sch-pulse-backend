@@ -8,10 +8,12 @@ import { catchAsync } from "../utils/catchAsync";
 import {
   forgotPasswordSchema,
   loginSchema,
+  passwordSchema,
   resetPasswordSchema,
 } from "../validations/auth.validation";
 
 const googleSchema = z.object({ idToken: z.string().min(10) });
+const setPasswordSchema = z.object({ password: passwordSchema });
 
 const router = Router();
 
@@ -31,5 +33,11 @@ router.post(
   catchAsync(AuthController.resetPassword),
 );
 router.get("/me", authenticate, catchAsync(AuthController.me));
+router.post(
+  "/set-password",
+  authenticate,
+  validate({ body: setPasswordSchema }),
+  catchAsync(AuthController.setPassword),
+);
 
 export default router;

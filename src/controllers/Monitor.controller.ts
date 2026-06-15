@@ -432,6 +432,8 @@ export async function monitorSummary(req: Request, res: Response): Promise<void>
     status: monitor.status,
     down,
     stateSince,
+    // When monitoring actually began — so the UI never implies more coverage than we have.
+    monitoringSince: (monitor as { createdAt?: Date }).createdAt ?? null,
     lastCheckedAt: monitor.lastCheckedAt ?? null,
     intervalSec: monitor.intervalSec,
     sslExpiresAt: monitor.sslExpiresAt ?? null,
