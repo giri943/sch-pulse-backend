@@ -5,12 +5,15 @@ import { Incident } from "../../models/incident.model";
 import { UptimeStat } from "../../models/uptimeStat.model";
 import { User } from "../../models/user.model";
 import { logger } from "../../config/logger";
-import { sendEmail, monitorExpiringEmail, monitorExpiredEmail } from "../mailer";
+import { sendEmail, monitorExpiringEmail, monitorExpiredEmail, domainExpiringEmail } from "../mailer";
 import { notifyChannels } from "../channels";
+import { probeDomainExpiry } from "./domainProbe";
+import { DOMAIN_WARN_DAYS } from "../../utils/constants";
 
 const DAY = 24 * 60 * 60 * 1000;
 const REMINDER_DAYS = [3, 2, 1]; // daily reminders in the final 3 days
 const PURGE_AFTER_DAYS = 7; // hard-delete this long after soft-delete
+const DOMAIN_REFRESH_MS = 20 * 60 * 60 * 1000; // re-probe a domain's expiry at most ~daily
 
 interface LifecycleMonitor {
   _id: unknown;
@@ -21,6 +24,9 @@ interface LifecycleMonitor {
   channels?: unknown[];
   expiresAt?: Date | null;
   expiryRemindersSent?: number[];
+  domainExpiresAt?: Date | null;
+  domainCheckedAt?: Date | null;
+  domainWarnedThresholds?: number[];
 }
 
 async function recipients(m: LifecycleMonitor): Promise<string[]> {
@@ -63,7 +69,53 @@ export async function runLifecycle(): Promise<void> {
     }
   }
 
-  // 2) Permanently delete monitors soft-deleted more than PURGE_AFTER_DAYS ago (cascade).
+  // 2) Domain registration expiry — refresh ~daily via RDAP, warn at thresholds.
+  const live = (await Monitor.find({ softDeletedAt: null, enabled: true }).lean()) as unknown as LifecycleMonitor[];
+  for (const m of live) {
+    let expiresAt = m.domainExpiresAt ? new Date(m.domainExpiresAt) : null;
+    const stale =
+      !m.domainCheckedAt || now.getTime() - new Date(m.domainCheckedAt).getTime() > DOMAIN_REFRESH_MS;
+    if (stale) {
+      const probed = await probeDomainExpiry(m.url);
+      if (probed) {
+        // If the domain was renewed (expiry moved out), reset warnings so we alert again next cycle.
+        const renewed = expiresAt && probed.getTime() > expiresAt.getTime() + DAY;
+        await Monitor.updateOne(
+          { _id: m._id },
+          { domainCheckedAt: now, domainExpiresAt: probed, ...(renewed ? { domainWarnedThresholds: [] } : {}) },
+        );
+        if (renewed) m.domainWarnedThresholds = [];
+        expiresAt = probed;
+      } else {
+        await Monitor.updateOne({ _id: m._id }, { domainCheckedAt: now });
+      }
+    }
+    if (!expiresAt) continue;
+
+    const days = Math.ceil((expiresAt.getTime() - now.getTime()) / DAY);
+    const warned = m.domainWarnedThresholds ?? [];
+    const threshold = DOMAIN_WARN_DAYS.find((t) => days >= 0 && days <= t && !warned.includes(t));
+    if (threshold != null) {
+      await Monitor.updateOne({ _id: m._id }, { $addToSet: { domainWarnedThresholds: threshold } });
+      const to = await recipients(m);
+      let domain = m.url;
+      try {
+        domain = new URL(m.url).hostname.replace(/^www\./, "");
+      } catch {
+        /* keep url */
+      }
+      await sendEmail(
+        domainExpiringEmail({ to, domain, monitorName: m.name, expiresAt: expiresAt.toISOString(), daysRemaining: days }),
+      );
+      await notifyChannels(
+        m.channels,
+        `🌐 Domain *${domain}* (monitor *${m.name}*) expires in ${days} day(s) on ${expiresAt.toDateString()}. Renew it before it lapses.`,
+      );
+      logger.info({ monitorId: String(m._id), days }, "Domain expiry warning sent");
+    }
+  }
+
+  // 3) Permanently delete monitors soft-deleted more than PURGE_AFTER_DAYS ago (cascade).
   const cutoff = new Date(now.getTime() - PURGE_AFTER_DAYS * DAY);
   const toPurge = await Monitor.find({ softDeletedAt: { $ne: null, $lte: cutoff } }).select("_id").lean();
   for (const m of toPurge) {

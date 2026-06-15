@@ -73,6 +73,26 @@ export function sslWarningEmail(p: {
   };
 }
 
+export function domainExpiringEmail(p: {
+  to: string[];
+  domain: string;
+  monitorName: string;
+  expiresAt: string;
+  daysRemaining: number;
+}): EmailMessage {
+  const subject = `[DOMAIN EXPIRY WARNING] ${p.domain} — ${p.daysRemaining} day(s) left`;
+  const rows = `<p><b>Domain:</b> ${p.domain}</p><p><b>Monitor:</b> ${p.monitorName}</p>
+    <p><b>Registration expires:</b> ${new Date(p.expiresAt).toDateString()} (${p.daysRemaining} day(s))</p>
+    <p>Renew the domain with your registrar before it lapses — an expired domain takes the site offline
+    and can be lost.</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell(`🌐 Domain expiring in ${p.daysRemaining} days`, rows),
+    text: `${subject}\nDomain: ${p.domain}\nExpires: ${new Date(p.expiresAt).toDateString()}\nDays left: ${p.daysRemaining}`,
+  };
+}
+
 export function testNotificationEmail(p: {
   to: string[];
   monitorName: string;

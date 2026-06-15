@@ -54,6 +54,10 @@ const monitorSchema = new Schema(
     nextRunAt: { type: Date, default: () => new Date() },
     sslExpiresAt: { type: Date },
     sslWarnedThresholds: { type: [Number], default: [] },
+    // ─── domain registration expiry (via RDAP, refreshed ~daily) ───
+    domainExpiresAt: { type: Date },
+    domainCheckedAt: { type: Date },
+    domainWarnedThresholds: { type: [Number], default: [] },
   },
   { timestamps: true },
 );

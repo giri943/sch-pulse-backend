@@ -437,6 +437,7 @@ export async function monitorSummary(req: Request, res: Response): Promise<void>
     lastCheckedAt: monitor.lastCheckedAt ?? null,
     intervalSec: monitor.intervalSec,
     sslExpiresAt: monitor.sslExpiresAt ?? null,
+    domainExpiresAt: (monitor as { domainExpiresAt?: Date }).domainExpiresAt ?? null,
     uptime: { "24h": windowPct(RANGE_MS["24h"]), "7d": windowPct(RANGE_MS["7d"]), "30d": windowPct(RANGE_MS["30d"]) },
     response: resp
       ? { avg: Math.round(resp.avg), min: resp.min, max: resp.max, checks: resp.total }

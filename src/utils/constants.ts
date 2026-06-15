@@ -22,6 +22,9 @@ export const FAILURE_THRESHOLD = 2;
 /** SSL expiry warning thresholds in days. */
 export const SSL_WARN_DAYS = [30, 15, 7] as const;
 
+/** Domain-registration expiry warning thresholds in days. */
+export const DOMAIN_WARN_DAYS = [30, 15, 7] as const;
+
 export const RULE_MATCH_TYPES = ["statusCode", "errorContains", "category"] as const;
 export const RULE_CATEGORIES = ["web", "api", "ssl", "dns", "db", "infra"] as const;
 export const API_ASSERTION_OPERATORS = ["equals", "exists", "contains"] as const;
