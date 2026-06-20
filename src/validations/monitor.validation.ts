@@ -23,6 +23,7 @@ const baseMonitor = z.object({
   name: z.string().trim().min(2).max(120),
   type: z.enum(MONITOR_TYPES),
   url: z.string().url(),
+  projectId: objectId,
   method: z.enum(HTTP_METHODS).default("GET"),
   timeoutMs: z.number().int().min(1000).max(60000).default(10000),
   expectedStatusCode: z.number().int().min(100).max(599).default(200),

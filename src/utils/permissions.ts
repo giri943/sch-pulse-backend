@@ -35,6 +35,11 @@ export const PERMISSIONS = {
   CHANNEL_READ: "channel:read",
   CHANNEL_MANAGE: "channel:manage",
 
+  PROJECT_READ: "project:read",
+  PROJECT_CREATE: "project:create",
+  PROJECT_UPDATE: "project:update",
+  PROJECT_DELETE: "project:delete",
+
   AUDIT_READ: "audit:read",
 } as const;
 
@@ -98,6 +103,15 @@ export const PERMISSION_CATALOG: { resource: string; items: { key: Permission; l
     ],
   },
   {
+    resource: "Projects",
+    items: [
+      { key: PERMISSIONS.PROJECT_READ, label: "View projects" },
+      { key: PERMISSIONS.PROJECT_CREATE, label: "Create projects" },
+      { key: PERMISSIONS.PROJECT_UPDATE, label: "Edit projects" },
+      { key: PERMISSIONS.PROJECT_DELETE, label: "Delete projects" },
+    ],
+  },
+  {
     resource: "Audit logs",
     items: [{ key: PERMISSIONS.AUDIT_READ, label: "View audit logs" }],
   },
@@ -116,6 +130,8 @@ export const MEMBER_PERMISSIONS: Permission[] = [
   PERMISSIONS.INCIDENT_READ_OWN,
   PERMISSIONS.INCIDENT_UPDATE_OWN,
   PERMISSIONS.CHANNEL_READ,
+  PERMISSIONS.PROJECT_READ,
+  PERMISSIONS.PROJECT_CREATE,
 ];
 
 /**

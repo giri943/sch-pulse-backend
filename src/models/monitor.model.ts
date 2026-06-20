@@ -28,6 +28,8 @@ const monitorSchema = new Schema(
     headers: { type: Schema.Types.Mixed },
     body: { type: String },
     assertions: { type: [assertionSchema], default: undefined },
+    /** Project this monitor belongs to (grouping). Back-filled to "General" on boot. */
+    projectId: { type: Types.ObjectId, ref: "Project", index: true },
     /** Owner + tagged users (visibility + alerts). */
     createdBy: { type: Types.ObjectId, ref: "User", required: true },
     members: { type: [Types.ObjectId], ref: "User", default: [] },

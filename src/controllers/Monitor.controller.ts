@@ -32,8 +32,11 @@ function serializeMonitor<T extends Record<string, unknown>>(m: T): T {
     r && typeof r === "object" ? (r as Record<string, unknown>) : null;
   const members = (m.members as unknown[] | undefined) ?? [];
   const channels = (m.channels as unknown[] | undefined) ?? [];
+  const projRef = ref(m.projectId);
   return {
     ...m,
+    projectId: projRef?._id ? String(projRef._id) : m.projectId ? String(m.projectId) : null,
+    project: projRef?._id ? { id: String(projRef._id), name: projRef.name } : null,
     members: members
       .map(ref)
       .filter((u): u is NonNullable<typeof u> => !!u && !!u._id)
@@ -169,6 +172,7 @@ export async function joinMonitor(req: Request, res: Response): Promise<void> {
   }
 
   const populated = await Monitor.findById(monitor._id)
+    .populate("projectId", "name")
     .populate("members", "name email avatarUrl")
     .populate("channels", "name type")
     .lean();
@@ -180,6 +184,7 @@ export async function listMonitors(req: Request, res: Response): Promise<void> {
   const q = req.query as Record<string, string>;
   const filter: Record<string, unknown> = { ...monitorScopeFilter(req.user!) };
   if (q.type) filter.type = q.type;
+  if (q.projectId) filter.projectId = q.projectId;
   if (q.enabled !== undefined) filter.enabled = q.enabled === "true";
   // Archived (soft-deleted) monitors are hidden unless explicitly requested.
   filter.softDeletedAt = q.deleted === "true" ? { $ne: null } : null;
@@ -189,7 +194,8 @@ export async function listMonitors(req: Request, res: Response): Promise<void> {
       .sort(parseSort(q.sort))
       .skip(skip(page, limit))
       .limit(limit)
-      .populate("members", "name email avatarUrl")
+      .populate("projectId", "name")
+    .populate("members", "name email avatarUrl")
       .populate("channels", "name type")
       .lean(),
     Monitor.countDocuments(filter),
@@ -199,6 +205,7 @@ export async function listMonitors(req: Request, res: Response): Promise<void> {
 
 export async function getMonitor(req: Request, res: Response): Promise<void> {
   const monitor = await Monitor.findById(req.params.id)
+    .populate("projectId", "name")
     .populate("members", "name email avatarUrl")
     .populate("channels", "name type")
     .lean();
