@@ -6,6 +6,8 @@ import { writeAudit } from "../utils/audit";
 import { paginate, pageParams } from "../utils/response";
 import { skip } from "../utils/query";
 import { ProjectMember } from "../models/projectMember.model";
+import { ProjectJoinRequest } from "../models/projectJoinRequest.model";
+import { projectRole } from "../utils/projectAccess";
 
 const DOWN_COUNT = { $sum: { $cond: [{ $in: ["$status", ["down", "degraded"]] }, 1, 0] } };
 
@@ -54,7 +56,8 @@ export async function getProject(req: Request, res: Response): Promise<void> {
     { $match: { softDeletedAt: null, projectId: project._id } },
     { $group: { _id: null, n: { $sum: 1 }, down: DOWN_COUNT } },
   ]);
-  res.json(serialize(project, c?.n ?? 0, c?.down ?? 0));
+  const myRole = await projectRole(req.user!, project._id);
+  res.json({ ...serialize(project, c?.n ?? 0, c?.down ?? 0), myRole });
 }
 
 export async function createProject(req: Request, res: Response): Promise<void> {
@@ -91,6 +94,11 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
   const general = await Project.findOne({ name: GENERAL_PROJECT }).select("_id").lean();
   if (general) await Monitor.updateMany({ projectId: project._id }, { projectId: general._id });
 
+  // Clean up memberships + requests so nothing is orphaned.
+  await Promise.all([
+    ProjectMember.deleteMany({ projectId: project._id }),
+    ProjectJoinRequest.deleteMany({ projectId: project._id }),
+  ]);
   await project.deleteOne();
   await writeAudit(req, "project.delete", { targetType: "project", targetId: project.id });
   res.status(204).send();
