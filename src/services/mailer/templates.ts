@@ -109,6 +109,45 @@ export function testNotificationEmail(p: {
   };
 }
 
+export function projectJoinRequestEmail(p: {
+  to: string[];
+  projectName: string;
+  requesterName: string;
+  requesterEmail: string;
+  message?: string;
+}): EmailMessage {
+  const subject = `[ACCESS REQUEST] ${p.requesterName} wants to join ${p.projectName}`;
+  const rows = `<p><b>${p.requesterName}</b> (${p.requesterEmail}) has requested access to the project
+    <b>${p.projectName}</b>.</p>${p.message ? `<p style="color:#6b7280">“${p.message}”</p>` : ""}
+    <p>Review it in Schbang Pulse → the project's <b>Members</b> tab to approve or decline.</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell("👥 New access request", rows),
+    text: `${subject}\n${p.requesterName} (${p.requesterEmail}) requested access to ${p.projectName}.${p.message ? `\nMessage: ${p.message}` : ""}`,
+  };
+}
+
+export function projectJoinDecisionEmail(p: {
+  to: string[];
+  projectName: string;
+  accepted: boolean;
+  deciderName: string;
+  role?: string;
+}): EmailMessage {
+  const subject = `[${p.accepted ? "ACCESS GRANTED" : "ACCESS DECLINED"}] ${p.projectName}`;
+  const rows = p.accepted
+    ? `<p><b>${p.deciderName}</b> accepted your request to join <b>${p.projectName}</b> as <b>${p.role}</b>.</p>
+       <p>You can now see this project's monitors on your dashboard.</p>`
+    : `<p><b>${p.deciderName}</b> declined your request to join <b>${p.projectName}</b>.</p>`;
+  return {
+    to: p.to,
+    subject,
+    html: shell(p.accepted ? "✅ Request accepted" : "🚫 Request declined", rows),
+    text: `${subject}\n${p.deciderName} ${p.accepted ? `accepted your request to join ${p.projectName} as ${p.role}` : `declined your request to join ${p.projectName}`}.`,
+  };
+}
+
 export function monitorJoinedEmail(p: {
   to: string[];
   monitorName: string;

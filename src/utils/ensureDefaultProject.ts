@@ -1,5 +1,6 @@
 import { Project, GENERAL_PROJECT } from "../models/project.model";
 import { Monitor } from "../models/monitor.model";
+import { ProjectMember } from "../models/projectMember.model";
 import { logger } from "../config/logger";
 
 /**
@@ -22,5 +23,15 @@ export async function ensureDefaultProject(): Promise<void> {
   );
   if (res.modifiedCount) {
     logger.info(`Backfilled ${res.modifiedCount} monitor(s) into the "${GENERAL_PROJECT}" project`);
+  }
+
+  // Make each project's creator an owner (idempotent) so existing projects have an owner.
+  const owned = await Project.find({ createdBy: { $ne: null } }).select("_id createdBy").lean();
+  for (const p of owned) {
+    await ProjectMember.updateOne(
+      { projectId: p._id, userId: p.createdBy },
+      { $setOnInsert: { role: "owner" } },
+      { upsert: true },
+    );
   }
 }

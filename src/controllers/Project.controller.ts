@@ -5,6 +5,7 @@ import { ApiError } from "../utils/ApiError";
 import { writeAudit } from "../utils/audit";
 import { paginate, pageParams } from "../utils/response";
 import { skip } from "../utils/query";
+import { ProjectMember } from "../models/projectMember.model";
 
 const DOWN_COUNT = { $sum: { $cond: [{ $in: ["$status", ["down", "degraded"]] }, 1, 0] } };
 
@@ -60,6 +61,8 @@ export async function createProject(req: Request, res: Response): Promise<void> 
   const { name, description } = req.body;
   if (await Project.findOne({ name })) throw ApiError.conflict("A project with that name already exists");
   const project = await Project.create({ name, description: description ?? "", createdBy: req.user!.id });
+  // The creator is the project's first owner.
+  await ProjectMember.create({ projectId: project._id, userId: req.user!.id, role: "owner" });
   await writeAudit(req, "project.create", { targetType: "project", targetId: project.id });
   res.status(201).json(serialize(project));
 }
