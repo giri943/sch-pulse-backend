@@ -12,6 +12,7 @@ import { writeAudit } from "../utils/audit";
 import { sendEmail, testNotificationEmail, monitorJoinedEmail } from "../services/mailer";
 import { notifyChannels } from "../services/channels";
 import {
+  assertCanCreateInProject,
   assertCanReadMonitor,
   assertCanWriteMonitor,
   isOwnerOrMember,
@@ -60,6 +61,9 @@ async function recipientsFor(monitor: { members?: unknown[]; extraAlertEmails?: 
 }
 
 export async function createMonitor(req: Request, res: Response): Promise<void> {
+  // You can only add a monitor to a project you own/edit (General is open).
+  await assertCanCreateInProject(req.user!, req.body.projectId);
+
   // Duplicate monitors are not allowed — one monitor per target (normalized
   // URL), org-wide. If a monitor already exists, the user must join it instead.
   const dup = await findDuplicateMonitor(String(req.body.url ?? ""));
@@ -182,7 +186,7 @@ export async function joinMonitor(req: Request, res: Response): Promise<void> {
 export async function listMonitors(req: Request, res: Response): Promise<void> {
   const { page, limit } = pageParams(req.query);
   const q = req.query as Record<string, string>;
-  const filter: Record<string, unknown> = { ...monitorScopeFilter(req.user!) };
+  const filter: Record<string, unknown> = { ...(await monitorScopeFilter(req.user!)) };
   if (q.type) filter.type = q.type;
   if (q.projectId) filter.projectId = q.projectId;
   if (q.enabled !== undefined) filter.enabled = q.enabled === "true";
@@ -210,14 +214,14 @@ export async function getMonitor(req: Request, res: Response): Promise<void> {
     .populate("channels", "name type")
     .lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
-  assertCanReadMonitor(req.user!, monitor);
+  await assertCanReadMonitor(req.user!, monitor);
   res.json(serializeMonitor(monitor));
 }
 
 export async function updateMonitor(req: Request, res: Response): Promise<void> {
   const existing = await Monitor.findById(req.params.id).lean();
   if (!existing) throw ApiError.notFound("Monitor not found");
-  assertCanWriteMonitor(req.user!, existing, "update");
+  await assertCanWriteMonitor(req.user!, existing, "update");
 
   const monitor = await Monitor.findByIdAndUpdate(req.params.id, req.body, { new: true }).lean();
   await writeAudit(req, "monitor.update", {
@@ -231,7 +235,7 @@ export async function updateMonitor(req: Request, res: Response): Promise<void> 
 export async function deleteMonitor(req: Request, res: Response): Promise<void> {
   const existing = await Monitor.findById(req.params.id).lean();
   if (!existing) throw ApiError.notFound("Monitor not found");
-  assertCanWriteMonitor(req.user!, existing, "delete");
+  await assertCanWriteMonitor(req.user!, existing, "delete");
 
   // Cascade: remove the monitor's checks, incidents and stats too.
   await Promise.all([
@@ -248,7 +252,7 @@ export async function deleteMonitor(req: Request, res: Response): Promise<void> 
 export async function restoreMonitor(req: Request, res: Response): Promise<void> {
   const existing = await Monitor.findById(req.params.id).lean();
   if (!existing) throw ApiError.notFound("Monitor not found");
-  assertCanWriteMonitor(req.user!, existing, "update");
+  await assertCanWriteMonitor(req.user!, existing, "update");
 
   const monitor = await Monitor.findByIdAndUpdate(
     req.params.id,
@@ -262,7 +266,7 @@ export async function restoreMonitor(req: Request, res: Response): Promise<void>
 async function setEnabled(req: Request, res: Response, enabled: boolean, action: string) {
   const existing = await Monitor.findById(req.params.id).lean();
   if (!existing) throw ApiError.notFound("Monitor not found");
-  assertCanWriteMonitor(req.user!, existing, "update");
+  await assertCanWriteMonitor(req.user!, existing, "update");
 
   const update = enabled
     ? { enabled: true, status: "unknown", nextRunAt: new Date() }
@@ -279,7 +283,7 @@ export const resumeMonitor = (req: Request, res: Response) => setEnabled(req, re
 export async function runMonitor(req: Request, res: Response): Promise<void> {
   const existing = await Monitor.findById(req.params.id).lean();
   if (!existing) throw ApiError.notFound("Monitor not found");
-  assertCanWriteMonitor(req.user!, existing, "run");
+  await assertCanWriteMonitor(req.user!, existing, "run");
 
   await Monitor.findByIdAndUpdate(req.params.id, { nextRunAt: new Date() });
   await writeAudit(req, "monitor.run", { targetType: "monitor", targetId: req.params.id });
@@ -290,7 +294,7 @@ export async function runMonitor(req: Request, res: Response): Promise<void> {
 export async function testNotification(req: Request, res: Response): Promise<void> {
   const monitor = await Monitor.findById(req.params.id).lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
-  assertCanWriteMonitor(req.user!, monitor, "run");
+  await assertCanWriteMonitor(req.user!, monitor, "run");
 
   const to = await recipientsFor(monitor);
   const channelIds = (monitor.channels as unknown[] | undefined) ?? [];
@@ -337,7 +341,7 @@ export async function testNotification(req: Request, res: Response): Promise<voi
 export async function monitorChecks(req: Request, res: Response): Promise<void> {
   const monitor = await Monitor.findById(req.params.id).lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
-  assertCanReadMonitor(req.user!, monitor);
+  await assertCanReadMonitor(req.user!, monitor);
 
   const { page, limit } = pageParams(req.query);
   const filter = { monitorId: req.params.id };
@@ -349,9 +353,9 @@ export async function monitorChecks(req: Request, res: Response): Promise<void> 
 }
 
 export async function monitorUptime(req: Request, res: Response): Promise<void> {
-  const monitor = await Monitor.findById(req.params.id).select("createdBy members").lean();
+  const monitor = await Monitor.findById(req.params.id).select("createdBy members projectId").lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
-  assertCanReadMonitor(req.user!, monitor);
+  await assertCanReadMonitor(req.user!, monitor);
 
   const range = ((req.query.range as string) || "24h") as UptimeRange;
   const from = new Date(Date.now() - (RANGE_MS[range] ?? RANGE_MS["24h"]));
@@ -388,7 +392,7 @@ export async function monitorSummary(req: Request, res: Response): Promise<void>
 
   const monitor = await Monitor.findById(id).lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
-  assertCanReadMonitor(req.user!, monitor);
+  await assertCanReadMonitor(req.user!, monitor);
 
   const down = !!monitor.currentIncidentId;
   let stateSince: Date | null;

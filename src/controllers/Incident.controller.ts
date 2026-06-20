@@ -5,14 +5,13 @@ import { ApiError } from "../utils/ApiError";
 import { paginate, pageParams } from "../utils/response";
 import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
-import { accessibleMonitorIds, isOwnerOrMember } from "../utils/access";
-import { canWrite } from "../utils/permissions";
+import { accessibleMonitorIds, canWriteIncidentFor } from "../utils/access";
 
 /** Load the incident's monitor and 403 unless the user may write to it. */
 async function assertIncidentWritable(req: Request, monitorId: unknown) {
-  const monitor = await Monitor.findById(monitorId).select("createdBy members").lean();
+  const monitor = await Monitor.findById(monitorId).select("createdBy members projectId").lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
-  if (!canWrite(req.user!.permissions, "incident", "update", isOwnerOrMember(req.user!, monitor))) {
+  if (!(await canWriteIncidentFor(req.user!, monitor))) {
     throw ApiError.forbidden("You don't have permission to modify this incident");
   }
 }

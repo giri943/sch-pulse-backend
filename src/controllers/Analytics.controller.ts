@@ -37,9 +37,9 @@ async function computeMetrics(match: Record<string, unknown>, incidentMatch: Rec
 }
 
 export async function monitorAnalytics(req: Request, res: Response): Promise<void> {
-  const monitor = await Monitor.findById(req.params.id).select("createdBy members").lean();
+  const monitor = await Monitor.findById(req.params.id).select("createdBy members projectId").lean();
   if (!monitor) throw ApiError.notFound("Monitor not found");
-  assertCanReadMonitor(req.user!, monitor);
+  await assertCanReadMonitor(req.user!, monitor);
   const id = new Types.ObjectId(req.params.id);
   res.json(await computeMetrics({ monitorId: id }, { monitorId: id }));
 }
