@@ -4,6 +4,9 @@
   "private": true,
   "description": "Schbang Pulse backend — monitoring API + in-process monitoring cron.",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "node --watch-path=./src --env-file=.env --import tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
