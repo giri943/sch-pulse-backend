@@ -19,6 +19,7 @@ import {
   monitorScopeFilter,
 } from "../utils/access";
 import { normalizeUrl } from "../utils/url";
+import { sparklines } from "../utils/sparkline";
 import type { UptimeRange } from "../utils/constants";
 
 const RANGE_MS: Record<UptimeRange, number> = {
@@ -213,30 +214,6 @@ export async function listMonitors(req: Request, res: Response): Promise<void> {
     return { ...serializeMonitor(m), spark: s?.spark ?? [], uptime24h: s?.uptime24h ?? null };
   });
   res.json(paginate(enriched, total, page, limit));
-}
-
-/** Last-24h hourly avg response times + overall uptime%, keyed by monitor id. */
-async function sparklines(ids: Types.ObjectId[]): Promise<Map<string, { spark: number[]; uptime24h: number | null }>> {
-  if (!ids.length) return new Map();
-  const since = new Date(Date.now() - RANGE_MS["24h"]);
-  const rows = await UptimeStat.aggregate<{ _id: Types.ObjectId; spark: number[]; ups: number; cnt: number }>([
-    { $match: { monitorId: { $in: ids }, bucketStart: { $gte: since } } },
-    { $sort: { bucketStart: 1 } },
-    {
-      $group: {
-        _id: "$monitorId",
-        spark: { $push: { $cond: [{ $gt: ["$count", 0] }, { $round: [{ $divide: ["$sumResponseMs", "$count"] }, 0] }, 0] } },
-        ups: { $sum: "$ups" },
-        cnt: { $sum: "$count" },
-      },
-    },
-  ]);
-  return new Map(
-    rows.map((r) => [
-      String(r._id),
-      { spark: r.spark, uptime24h: r.cnt > 0 ? Math.round((r.ups / r.cnt) * 1000) / 10 : null },
-    ]),
-  );
 }
 
 export async function getMonitor(req: Request, res: Response): Promise<void> {

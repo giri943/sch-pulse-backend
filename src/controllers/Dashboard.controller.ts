@@ -1,9 +1,11 @@
 import type { Request, Response } from "express";
+import { Types } from "mongoose";
 import { Monitor } from "../models/monitor.model";
 import { Incident } from "../models/incident.model";
 import { UptimeStat } from "../models/uptimeStat.model";
 import { SSL_WARN_DAYS, type UptimeRange } from "../utils/constants";
 import { accessibleMonitorIds } from "../utils/access";
+import { sparklines } from "../utils/sparkline";
 
 const RANGE_MS: Record<UptimeRange, number> = {
   "24h": 24 * 60 * 60 * 1000,
@@ -99,16 +101,19 @@ export async function sslExpiring(req: Request, res: Response): Promise<void> {
 export async function statusBoard(req: Request, res: Response): Promise<void> {
   const { monitorFilter } = await scope(req);
   const monitors = await Monitor.find(monitorFilter)
-    .select("name url status lastResponseTimeMs")
+    .select("name url status enabled lastResponseTimeMs")
     .sort({ status: 1, name: 1 })
     .lean();
+  const sparks = await sparklines(monitors.map((m) => m._id as Types.ObjectId));
   res.json(
     monitors.map((m) => ({
       monitorId: String(m._id),
       name: m.name,
       url: m.url,
       status: m.status,
+      enabled: m.enabled,
       lastResponseTimeMs: m.lastResponseTimeMs ?? null,
+      spark: sparks.get(String(m._id))?.spark ?? [],
     })),
   );
 }
