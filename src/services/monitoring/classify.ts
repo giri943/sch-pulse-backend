@@ -119,17 +119,18 @@ function detectWaf(input: ClassifyInput): Detection | null {
     if (status === 403 || status === 429 || body.includes("attention required") || body.includes("error 1020")) {
       return { vendor: "cloudflare", kind: "block" };
     }
-    // Present but no block/challenge signal (normal Cloudflare-fronted 2xx).
-    if (status === 503) return { vendor: "cloudflare", kind: "challenge" };
+    // NB: a plain 5xx through Cloudflare (no interstitial body) is an ORIGIN error,
+    // not a challenge — it's left for the 5xx guard in classify() to mark down.
   }
 
   // ── F5 BIG-IP ASM ── (the "TSxxxxxxxx" cookie, or BIGipServer pool cookie)
   if (/(^|[;\s])ts[0-9a-f]{6,}=/.test(cookies) || cookies.includes("bigipserver") || cookies.includes("f5_")) {
     if (body.includes("the requested url was rejected")) return { vendor: "f5-bigip", kind: "block" };
-    // F5's challenge issues the TS cookie on a redirect/interstitial. A TS cookie on
-    // a plain healthy 200 (no redirect) is just normal session tracking — not a gate.
-    const ok2xx = status !== undefined && status >= 200 && status < 300;
-    if (redirected || !ok2xx) return { vendor: "f5-bigip", kind: "challenge" };
+    if (status === 403 || status === 429) return { vendor: "f5-bigip", kind: "block" };
+    // A challenge is the redirect/interstitial that issued the TS cookie (final status
+    // < 500). A TS cookie on a plain 200 is normal session tracking; a 5xx is an origin
+    // error — neither is a challenge, so they fall through to the status logic.
+    if (redirected && status !== undefined && status < 500) return { vendor: "f5-bigip", kind: "challenge" };
     return null;
   }
   if (body.includes("the requested url was rejected") && body.includes("support id")) {
@@ -173,6 +174,23 @@ function detectWaf(input: ClassifyInput): Detection | null {
     return { vendor: "sucuri", kind: "block" };
   }
 
+  return null;
+}
+
+/**
+ * Cheap vendor identification (headers/cookies only) regardless of block/challenge.
+ * Used to attribute origin errors — "your Cloudflare/F5-fronted origin is erroring".
+ */
+function vendorOf(input: ClassifyInput): WafVendor | null {
+  const { headers, setCookies = [] } = input;
+  const cookies = setCookies.join("; ").toLowerCase();
+  const server = h(headers, "server");
+  if (!!headers?.get("cf-ray") || server.includes("cloudflare") || h(headers, "cf-mitigated")) return "cloudflare";
+  if (/(^|[;\s])ts[0-9a-f]{6,}=/.test(cookies) || cookies.includes("bigipserver") || cookies.includes("f5_")) return "f5-bigip";
+  if (server.includes("akamaighost") || has(headers, "x-akamai-transformed")) return "akamai";
+  if (has(headers, "x-iinfo") || /incap_ses_|visid_incap_/.test(cookies)) return "imperva";
+  if (has(headers, "x-amzn-waf-action")) return "aws-waf";
+  if (has(headers, "x-sucuri-id") || has(headers, "x-sucuri-cache")) return "sucuri";
   return null;
 }
 
@@ -223,25 +241,33 @@ export function classify(input: ClassifyInput): ClassifyOutput {
     return { classification: "down_origin", up: false, waf: waf?.vendor ?? "cloudflare", reason: `Origin unreachable (HTTP ${status})` };
   }
 
-  // 3) Firewall interference → site is UP, don't alert. Distinguish challenge vs block.
-  if (waf) {
-    // Imperva "ambiguous" 200 page: only treat as block if content clearly didn't match
-    // OR a block phrase was present (handled inside detectWaf as "block").
-    if (waf.kind === "challenge") {
-      return { classification: "up_challenged", up: true, waf: waf.vendor, reason: `${labelOf(waf.vendor)} challenge — site is up but our checks are being gated` };
-    }
-    if (waf.kind === "block") {
-      return { classification: "up_blocked", up: true, waf: waf.vendor, reason: `${labelOf(waf.vendor)} blocked our check — site is up but the firewall is denying us` };
-    }
-    // ambiguous: if the page otherwise looks like a healthy expected response, treat up;
-    // if content was explicitly required and missing, fall through to content_mismatch.
+  // 3) An evidence-backed CHALLENGE (interstitial body / F5 redirect) means the site
+  //    is up even if the interstitial status looks odd (e.g. Cloudflare's 503 "Just a
+  //    moment"). This is the only firewall signal allowed to outrank the 5xx guard,
+  //    because it required positive proof of an interstitial — a bare 5xx never does.
+  if (waf?.kind === "challenge") {
+    return { classification: "up_challenged", up: true, waf: waf.vendor, reason: `${labelOf(waf.vendor)} challenge — site is up but our checks are being gated` };
+  }
+
+  // 4) A 5xx is an ORIGIN failure — a firewall can't mask it, so this is a real outage
+  //    and MUST alert (this is what keeps "blocked = up" from swallowing genuine downtime).
+  if (status >= 500) {
+    return { classification: "down_origin", up: false, waf: waf?.vendor ?? vendorOf(input), reason: `Server error (HTTP ${status})` };
+  }
+
+  // 5) A firewall BLOCK on a non-5xx (403/429/Imperva 200 page) → site is up, don't alert.
+  if (waf?.kind === "block") {
+    return { classification: "up_blocked", up: true, waf: waf.vendor, reason: `${labelOf(waf.vendor)} blocked our check — site is up but the firewall is denying us` };
+  }
+  if (waf?.kind === "ambiguous") {
+    // Imperva can serve a 200 block page; only call it down if required content is missing.
     if (input.contentMatch === false) {
       return { classification: "content_mismatch", up: false, waf: waf.vendor, reason: `${labelOf(waf.vendor)} returned a page missing the expected content` };
     }
     return { classification: "up_blocked", up: true, waf: waf.vendor, reason: `${labelOf(waf.vendor)} appears to be filtering our check — treating site as up` };
   }
 
-  // 4) No firewall. Plain status + content evaluation.
+  // 6) No firewall interference. Plain status + content evaluation.
   const statusOk = status === expected || (expected === 200 && status >= 200 && status < 300);
 
   if (statusOk) {
@@ -251,10 +277,7 @@ export function classify(input: ClassifyInput): ClassifyOutput {
     return { classification: "up", up: true, waf: null, reason: "Healthy" };
   }
 
-  // 5) Unexpected status, no firewall → attribute to the origin.
-  if (status >= 500) {
-    return { classification: "down_origin", up: false, waf: null, reason: `Server error (HTTP ${status})` };
-  }
+  // 7) Unexpected non-5xx status (e.g. 404, or a 4xx with no firewall) → real failure.
   return { classification: "down_origin", up: false, waf: null, reason: `Unexpected status ${status}` };
 }
 

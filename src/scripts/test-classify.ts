@@ -37,6 +37,13 @@ check("AWS WAF 403", classify({ status: 403, headers: H({ "x-amzn-waf-action": "
 // Sucuri
 check("Sucuri block", classify({ status: 403, headers: H({ "x-sucuri-id": "1" }), bodySample: "Sucuri WebSite Firewall" }), "up_blocked", true, "sucuri");
 
+// CRITICAL: origin DOWN behind a WAF must still alert (no false "up").
+check("F5 origin 503 (no redirect)", classify({ status: 503, setCookies: ["TS015d8eb0=abc; Path=/"] }), "down_origin", false, "f5-bigip");
+check("F5 origin 502 via redirect", classify({ status: 502, redirected: true, setCookies: ["TS015d8eb0=abc"] }), "down_origin", false, "f5-bigip");
+check("CF passes origin 502", classify({ status: 502, headers: H({ "cf-ray": "abc", server: "cloudflare" }) }), "down_origin", false, "cloudflare");
+check("CF plain 503 (no interstitial)", classify({ status: 503, headers: H({ "cf-ray": "abc", server: "cloudflare" }) }), "down_origin", false, "cloudflare");
+check("CF real 503 challenge", classify({ status: 503, headers: H({ "cf-ray": "abc", server: "cloudflare" }), bodySample: "Just a moment..." }), "up_challenged", true, "cloudflare");
+
 // Genuine failures (no WAF)
 check("500 origin error", classify({ status: 500 }), "down_origin", false, null);
 check("404 unexpected", classify({ status: 404 }), "down_origin", false, null);
