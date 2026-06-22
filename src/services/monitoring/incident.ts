@@ -57,6 +57,8 @@ export async function processResult(monitor: MonitorWithId, result: CheckResult)
     statusCode: result.statusCode,
     responseTimeMs: result.responseTimeMs,
     error: result.error ?? null,
+    classification: result.classification,
+    waf: result.waf ?? null,
   });
   await recordStat(monitor._id, result, now);
 
@@ -67,6 +69,16 @@ export async function processResult(monitor: MonitorWithId, result: CheckResult)
 
   if (result.up) await handleRecovery(monitor, result, now);
   else await handleFailure(monitor, result, now);
+}
+
+/** Per-check WAF/classification state to persist on the monitor (whatever the up/down verdict). */
+function wafPatch(result: CheckResult, now: Date): Record<string, unknown> {
+  const patch: Record<string, unknown> = {
+    lastClassification: result.classification ?? null,
+    waf: result.waf ?? null,
+  };
+  if (result.waf) patch.wafDetectedAt = now;
+  return patch;
 }
 
 async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: Date): Promise<void> {
@@ -80,6 +92,7 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
       status: failures >= FAILURE_THRESHOLD ? "down" : "degraded",
       lastCheckedAt: now,
       lastResponseTimeMs: result.responseTimeMs,
+      ...wafPatch(result, now),
     },
   );
   if (!willOpen) return;
@@ -134,6 +147,7 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
       currentIncidentId: null,
       lastCheckedAt: now,
       lastResponseTimeMs: result.responseTimeMs,
+      ...wafPatch(result, now),
     },
   );
   if (!wasDown) return;

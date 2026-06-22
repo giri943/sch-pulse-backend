@@ -1,4 +1,6 @@
-import { type CheckResult, type MonitorWithId, normalizeError } from "../types";
+import { type CheckResult, type MonitorWithId } from "../types";
+import { probe } from "../httpProbe";
+import { classify } from "../classify";
 
 interface Assertion {
   jsonPath: string;
@@ -27,51 +29,48 @@ function evaluate(body: unknown, assertions: Assertion[]): string | null {
   return null;
 }
 
-/** HTTP check plus optional JSON body assertions. */
+/** HTTP check plus optional JSON body assertions, now challenge-aware + WAF-aware. */
 export async function apiCheck(monitor: MonitorWithId): Promise<CheckResult> {
-  const start = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), monitor.timeoutMs ?? 10000);
+  const outcome = await probe(monitor.url, {
+    method: monitor.method ?? "GET",
+    headers: (monitor.headers as Record<string, string>) ?? undefined,
+    body: monitor.body ?? undefined,
+    timeoutMs: monitor.timeoutMs ?? 10000,
+  });
 
-  try {
-    const method = monitor.method ?? "GET";
-    const res = await fetch(monitor.url, {
-      method,
-      // Default UA/Accept so CDN/bot filters (e.g. Cloudflare) respond as they do
-      // to Postman/browsers; the monitor's own headers override these.
-      headers: {
-        "User-Agent": "SchbangPulse/1.0 (+uptime-monitor)",
-        Accept: "*/*",
-        ...((monitor.headers as Record<string, string>) ?? {}),
-      },
-      body: method !== "GET" && method !== "HEAD" ? (monitor.body ?? undefined) : undefined,
-      signal: controller.signal,
-    });
-    const responseTimeMs = Date.now() - start;
-    const expected = monitor.expectedStatusCode ?? 200;
-    // Match the website check: when expected is left at the default 200, treat
-    // any 2xx as healthy (e.g. a /_health endpoint returning 204). A specific
-    // non-200 expected (e.g. 204, 301) is still matched exactly.
-    let up = res.status === expected || (expected === 200 && res.status >= 200 && res.status < 300);
-    let error: string | null = up ? null : `Unexpected status ${res.status}`;
-
-    const assertions = (monitor.assertions as Assertion[] | undefined) ?? [];
-    if (up && assertions.length) {
-      try {
-        const failure = evaluate(await res.json(), assertions);
-        if (failure) {
-          up = false;
-          error = failure;
-        }
-      } catch {
-        up = false;
-        error = "Response was not valid JSON";
-      }
-    }
-    return { up, statusCode: res.status, responseTimeMs, error };
-  } catch (err) {
-    return { up: false, responseTimeMs: Date.now() - start, error: normalizeError(err) };
-  } finally {
-    clearTimeout(timer);
+  if (!outcome.response) {
+    const c = classify({ errorCode: outcome.errorCode });
+    return { up: c.up, responseTimeMs: outcome.responseTimeMs, error: c.reason, classification: c.classification, waf: c.waf };
   }
+
+  const r = outcome.response;
+  const assertions = (monitor.assertions as Assertion[] | undefined) ?? [];
+
+  // Evaluate JSON assertions against the body sample (health payloads are small).
+  // contentMatch feeds the classifier so a 2xx with wrong content is a real failure.
+  let assertionFailure: string | null = null;
+  let contentMatch: boolean | undefined;
+  if (assertions.length) {
+    try {
+      assertionFailure = evaluate(JSON.parse(r.bodySample), assertions);
+    } catch {
+      assertionFailure = "Response was not valid JSON";
+    }
+    contentMatch = assertionFailure === null;
+  }
+
+  const c = classify({
+    status: r.status,
+    headers: r.headers,
+    setCookies: r.setCookies,
+    bodySample: r.bodySample,
+    expectedStatus: monitor.expectedStatusCode ?? 200,
+    contentMatch,
+    redirected: r.redirected,
+  });
+
+  // If the firewall says "up" we trust it; otherwise an assertion failure on a 2xx
+  // surfaces as the specific reason.
+  const error = c.up ? null : (c.classification === "content_mismatch" && assertionFailure) || c.reason;
+  return { up: c.up, statusCode: r.status, responseTimeMs: r.responseTimeMs, error, classification: c.classification, waf: c.waf };
 }

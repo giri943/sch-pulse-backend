@@ -8,6 +8,10 @@ const checkSchema = new Schema(
     statusCode: { type: Number },
     responseTimeMs: { type: Number },
     error: { type: String, default: null },
+    /** WAF-aware classification of this check (e.g. up, up_blocked, down_origin). */
+    classification: { type: String },
+    /** Firewall detected in front of the target on this check, if any. */
+    waf: { type: String, default: null },
   },
   { timestamps: false },
 );

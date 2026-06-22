@@ -54,6 +54,12 @@ const monitorSchema = new Schema(
     lastCheckedAt: { type: Date },
     lastResponseTimeMs: { type: Number },
     nextRunAt: { type: Date, default: () => new Date() },
+    /** Latest WAF-aware classification (e.g. up, up_blocked, up_challenged). */
+    lastClassification: { type: String, default: null },
+    /** Firewall detected in front of this target (cloudflare, f5-bigip, …); null if none. */
+    waf: { type: String, default: null },
+    /** When the firewall was last observed interfering with our checks. */
+    wafDetectedAt: { type: Date, default: null },
     sslExpiresAt: { type: Date },
     sslWarnedThresholds: { type: [Number], default: [] },
     // ─── domain registration expiry (via RDAP, refreshed ~daily) ───

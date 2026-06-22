@@ -1,4 +1,5 @@
 import type { MonitorDoc } from "../../models/monitor.model";
+import type { Classification, WafVendor } from "./classify";
 
 export interface CheckResult {
   up: boolean;
@@ -7,6 +8,10 @@ export interface CheckResult {
   error?: string | null;
   /** SSL only: certificate expiry. */
   sslExpiresAt?: Date;
+  /** WAF-aware outcome classification (set by the website/api checks). */
+  classification?: Classification;
+  /** Firewall detected in front of the target, if any. */
+  waf?: WafVendor | null;
 }
 
 export type MonitorWithId = MonitorDoc & { _id: unknown };

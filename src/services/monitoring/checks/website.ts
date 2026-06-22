@@ -1,36 +1,46 @@
-import { type CheckResult, type MonitorWithId, normalizeError } from "../types";
+import { type CheckResult, type MonitorWithId } from "../types";
+import { probe } from "../httpProbe";
+import { classify } from "../classify";
 
 /**
- * HTTP request judged by status code + latency. Network/timeout errors are
- * returned as a DOWN result (not thrown) — they're valid outcomes.
+ * Website check: a challenge-aware HTTP request judged by `classify()`, which is
+ * WAF-aware — a firewall block/challenge means the site is UP, not down. Network/
+ * timeout/DNS/TLS errors are returned as a (non-up) result, not thrown.
  */
 export async function websiteCheck(monitor: MonitorWithId): Promise<CheckResult> {
-  const start = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), monitor.timeoutMs ?? 10000);
+  const outcome = await probe(monitor.url, {
+    method: monitor.method ?? "GET",
+    headers: (monitor.headers as Record<string, string>) ?? undefined,
+    body: monitor.body ?? undefined,
+    timeoutMs: monitor.timeoutMs ?? 10000,
+  });
 
-  try {
-    const method = monitor.method ?? "GET";
-    const res = await fetch(monitor.url, {
-      method,
-      // Default UA/Accept so CDN/bot filters (e.g. Cloudflare) respond as they do
-      // to Postman/browsers; the monitor's own headers override these.
-      headers: {
-        "User-Agent": "SchbangPulse/1.0 (+uptime-monitor)",
-        Accept: "*/*",
-        ...((monitor.headers as Record<string, string>) ?? {}),
-      },
-      body: method !== "GET" && method !== "HEAD" ? (monitor.body ?? undefined) : undefined,
-      signal: controller.signal,
-      redirect: "follow",
-    });
-    const responseTimeMs = Date.now() - start;
-    const expected = monitor.expectedStatusCode ?? 200;
-    const up = res.status === expected || (expected === 200 && res.status >= 200 && res.status < 300);
-    return { up, statusCode: res.status, responseTimeMs, error: up ? null : `Unexpected status ${res.status}` };
-  } catch (err) {
-    return { up: false, responseTimeMs: Date.now() - start, error: normalizeError(err) };
-  } finally {
-    clearTimeout(timer);
+  if (!outcome.response) {
+    const c = classify({ errorCode: outcome.errorCode });
+    return {
+      up: c.up,
+      responseTimeMs: outcome.responseTimeMs,
+      error: c.reason,
+      classification: c.classification,
+      waf: c.waf,
+    };
   }
+
+  const r = outcome.response;
+  const c = classify({
+    status: r.status,
+    headers: r.headers,
+    setCookies: r.setCookies,
+    bodySample: r.bodySample,
+    expectedStatus: monitor.expectedStatusCode ?? 200,
+    redirected: r.redirected,
+  });
+  return {
+    up: c.up,
+    statusCode: r.status,
+    responseTimeMs: r.responseTimeMs,
+    error: c.up ? null : c.reason,
+    classification: c.classification,
+    waf: c.waf,
+  };
 }
