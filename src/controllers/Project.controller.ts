@@ -1,6 +1,9 @@
 import type { Request, Response } from "express";
-import { Project, GENERAL_PROJECT } from "../models/project.model";
+import { Project } from "../models/project.model";
 import { Monitor } from "../models/monitor.model";
+import { Check } from "../models/check.model";
+import { Incident } from "../models/incident.model";
+import { UptimeStat } from "../models/uptimeStat.model";
 import { ApiError } from "../utils/ApiError";
 import { writeAudit } from "../utils/audit";
 import { paginate, pageParams } from "../utils/response";
@@ -95,16 +98,18 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
   if (!project) throw ApiError.notFound("Project not found");
   if (project.isSystem) throw ApiError.badRequest("The General project cannot be deleted");
 
-  // Move its monitors to General rather than orphaning them.
-  const general = await Project.findOne({ name: GENERAL_PROJECT }).select("_id").lean();
-  if (general) await Monitor.updateMany({ projectId: project._id }, { projectId: general._id });
-
-  // Clean up memberships + requests so nothing is orphaned.
+  // Deleting a project deletes its monitors and all their data (checks,
+  // incidents, uptime stats), plus its memberships and join requests.
+  const monitorIds = (await Monitor.find({ projectId: project._id }).select("_id").lean()).map((m) => m._id);
   await Promise.all([
+    Check.deleteMany({ monitorId: { $in: monitorIds } }),
+    Incident.deleteMany({ monitorId: { $in: monitorIds } }),
+    UptimeStat.deleteMany({ monitorId: { $in: monitorIds } }),
     ProjectMember.deleteMany({ projectId: project._id }),
     ProjectJoinRequest.deleteMany({ projectId: project._id }),
   ]);
+  await Monitor.deleteMany({ projectId: project._id });
   await project.deleteOne();
-  await writeAudit(req, "project.delete", { targetType: "project", targetId: project.id });
+  await writeAudit(req, "project.delete", { targetType: "project", targetId: project.id, metadata: { monitorsDeleted: monitorIds.length } });
   res.status(204).send();
 }
