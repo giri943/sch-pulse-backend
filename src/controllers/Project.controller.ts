@@ -28,7 +28,12 @@ export async function listProjects(req: Request, res: Response): Promise<void> {
   const { page, limit } = pageParams(req.query);
   const q = String((req.query.q as string) ?? "").trim();
   const filter: Record<string, unknown> = {};
-  if (q) filter.name = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  if (q) {
+    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    // Match the project name OR any project that contains a monitor whose url/name matches.
+    const monitorProjectIds = await Monitor.find({ softDeletedAt: null, $or: [{ url: rx }, { name: rx }] }).distinct("projectId");
+    filter.$or = [{ name: rx }, { _id: { $in: monitorProjectIds } }];
+  }
 
   const [projects, total] = await Promise.all([
     Project.find(filter).sort({ isSystem: -1, name: 1 }).skip(skip(page, limit)).limit(limit).lean(),
