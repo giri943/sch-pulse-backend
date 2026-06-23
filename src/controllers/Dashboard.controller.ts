@@ -4,6 +4,10 @@ import { Monitor } from "../models/monitor.model";
 import { Incident } from "../models/incident.model";
 import { UptimeStat } from "../models/uptimeStat.model";
 import { SSL_WARN_DAYS, type UptimeRange } from "../utils/constants";
+
+/** Domains within this window are surfaced on the dashboard — more lead time than SSL,
+ *  since registration renewal (and recovery from a lapse) is slower and higher-stakes. */
+const DOMAIN_HORIZON_DAYS = 60;
 import { accessibleMonitorIds } from "../utils/access";
 import { sparklines } from "../utils/sparkline";
 
@@ -65,6 +69,9 @@ export async function uptimeOverview(req: Request, res: Response): Promise<void>
       t: r._id,
       uptime: r.count ? Number(((r.ups / r.count) * 100).toFixed(2)) : null,
       avgResponseMs: r.count ? Math.round(r.sumResponseMs / r.count) : null,
+      // Raw counts so the client can compute an accurate range-wide uptime.
+      ups: r.ups,
+      count: r.count,
     })),
   });
 }
@@ -93,6 +100,25 @@ export async function sslExpiring(req: Request, res: Response): Promise<void> {
       sslExpiresAt: m.sslExpiresAt,
       daysRemaining: m.sslExpiresAt
         ? Math.ceil((new Date(m.sslExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
+        : null,
+    })),
+  );
+}
+
+export async function domainExpiring(req: Request, res: Response): Promise<void> {
+  const { monitorFilter } = await scope(req);
+  const horizon = new Date(Date.now() + DOMAIN_HORIZON_DAYS * 24 * 60 * 60 * 1000);
+  const monitors = await Monitor.find({ ...monitorFilter, domainExpiresAt: { $ne: null, $lte: horizon } })
+    .sort({ domainExpiresAt: 1 })
+    .lean();
+  res.json(
+    monitors.map((m) => ({
+      monitorId: String(m._id),
+      name: m.name,
+      url: m.url,
+      domainExpiresAt: m.domainExpiresAt,
+      daysRemaining: m.domainExpiresAt
+        ? Math.ceil((new Date(m.domainExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
         : null,
     })),
   );
