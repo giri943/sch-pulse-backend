@@ -32,7 +32,7 @@ export async function listIncidents(req: Request, res: Response): Promise<void> 
       .sort(parseSort(q.sort ?? "-startedAt"))
       .skip(skip(page, limit))
       .limit(limit)
-      .populate("monitorId", "name url")
+      .populate({ path: "monitorId", select: "name url projectId", populate: { path: "projectId", select: "name" } })
       .lean(),
     Incident.countDocuments(filter),
   ]);
