@@ -15,6 +15,8 @@ const envSchema = z.object({
   COOKIE_DOMAIN: z.string().optional(),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   APP_BASE_URL: z.string().default("http://localhost:3000"),
+  // Extra emails (comma-separated) always granted Super Admin, on top of the built-in list.
+  SUPER_ADMIN_EMAILS: z.string().default(""),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().default(300),
 
@@ -82,6 +84,7 @@ export const config = {
   cookieDomain: env.COOKIE_DOMAIN,
   corsOrigins: env.CORS_ORIGINS.split(",").map((s) => s.trim()),
   appBaseUrl: env.APP_BASE_URL,
+  superAdminEmails: env.SUPER_ADMIN_EMAILS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
   rateLimit: { windowMs: env.RATE_LIMIT_WINDOW_MS, max: env.RATE_LIMIT_MAX },
 
   scheduler: { cron: env.SCHEDULER_CRON, concurrency: env.CHECK_CONCURRENCY },
