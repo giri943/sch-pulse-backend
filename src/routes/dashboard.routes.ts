@@ -1,10 +1,14 @@
 import { Router } from "express";
 import * as DashboardController from "../controllers/Dashboard.controller";
-import { authenticate } from "../middlewares/auth";
+import { authenticate, requirePermission } from "../middlewares/auth";
 import { catchAsync } from "../utils/catchAsync";
+import { PERMISSIONS as P } from "../utils/permissions";
 
 const router = Router();
 router.use(authenticate);
+// The dashboard only ever exposes monitor-derived data, all scoped to the
+// caller's accessible monitors — gate it behind monitor:read like every other router.
+router.use(requirePermission(P.MONITOR_READ_OWN, P.MONITOR_READ_ALL));
 
 router.get("/", catchAsync(DashboardController.globalStats));
 router.get("/uptime", catchAsync(DashboardController.uptimeOverview));

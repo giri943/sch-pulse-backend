@@ -10,7 +10,7 @@ import { paginate, pageParams } from "../utils/response";
 import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
 import { sendEmail, testNotificationEmail, monitorJoinedEmail } from "../services/mailer";
-import { notifyChannels } from "../services/channels";
+import { notifyChannels, pulseChat, chatMonitorLink } from "../services/channels";
 import {
   assertCanCreateInProject,
   assertCanReadMonitor,
@@ -169,10 +169,20 @@ export async function joinMonitor(req: Request, res: Response): Promise<void> {
       .map((p) => `<users/${p.googleId}>`)
       .join(" ");
     const joinerName = req.user!.name || req.user!.email;
-    void sendEmail(monitorJoinedEmail({ to, monitorName: monitor.name, url: monitor.url, joinerName }));
+    const joinedMonitorId = String(monitor._id);
+    void sendEmail(monitorJoinedEmail({ to, monitorName: monitor.name, url: monitor.url, joinerName, monitorId: joinedMonitorId }));
     void notifyChannels(
       monitor.channels as unknown[] | undefined,
-      `${mentions ? mentions + "\n" : ""}👥 *${joinerName}* joined monitoring for *${monitor.name}* (${monitor.url}).`,
+      pulseChat({
+        status: "info",
+        title: `${joinerName} joined ${monitor.name}`,
+        mentions,
+        rows: [
+          ["Monitor", monitor.name],
+          ["URL", monitor.url],
+        ],
+        button: { text: "View monitor", url: chatMonitorLink(joinedMonitorId) },
+      }),
     );
   }
 
@@ -312,14 +322,24 @@ export async function testNotification(req: Request, res: Response): Promise<voi
 
   // Send chat and email independently so one failing transport (e.g. SMTP
   // blocked on the host) doesn't prevent the other or hang the request.
+  const testMonitorId = String(monitor._id);
   const [emailResult, channelCount] = await Promise.all([
     to.length
-      ? sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url }))
+      ? sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url, monitorId: testMonitorId }))
       : Promise.resolve({ ok: false as const }),
     channelIds.length
       ? notifyChannels(
           channelIds as Parameters<typeof notifyChannels>[0],
-          `🔔 Test alert from Schbang Pulse for *${monitor.name}* (${monitor.url}) — alerts are configured correctly. ✅`,
+          pulseChat({
+            status: "info",
+            title: `Test alert — ${monitor.name}`,
+            rows: [
+              ["Monitor", monitor.name],
+              ["URL", monitor.url],
+              ["Status", "Alerts are configured correctly ✅"],
+            ],
+            button: { text: "View monitor", url: chatMonitorLink(testMonitorId) },
+          }),
         )
       : Promise.resolve(0),
   ]);
