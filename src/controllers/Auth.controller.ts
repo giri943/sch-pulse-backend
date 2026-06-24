@@ -2,7 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import type { CookieOptions, Request, Response } from "express";
 import { OAuth2Client } from "google-auth-library";
 import { User } from "../models/user.model";
-import { Role, MEMBER_ROLE } from "../models/role.model";
+import { Role, MEMBER_ROLE, SUPER_ADMIN_ROLE } from "../models/role.model";
+import { isBootstrapSuperAdmin } from "../utils/superAdmins";
 import { ApiError } from "../utils/ApiError";
 import { config } from "../config";
 import { logger } from "../config/logger";
@@ -102,12 +103,13 @@ export async function googleLogin(req: Request, res: Response): Promise<void> {
     .populate<{ role: PopulatedRole }>("role", "name permissions");
 
   if (!user) {
-    const memberRole = await Role.findOne({ name: MEMBER_ROLE });
-    if (!memberRole) throw ApiError.badRequest("Default role missing — run the seed");
+    const roleName = isBootstrapSuperAdmin(email) ? SUPER_ADMIN_ROLE : MEMBER_ROLE;
+    const assignedRole = await Role.findOne({ name: roleName });
+    if (!assignedRole) throw ApiError.badRequest("Default role missing — run the seed");
     const created = await User.create({
       name: payload.name ?? email,
       email,
-      role: memberRole._id,
+      role: assignedRole._id,
       authProvider: "google",
       googleId: payload.sub,
       avatarUrl: payload.picture,

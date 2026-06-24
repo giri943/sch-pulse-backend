@@ -14,7 +14,7 @@ import { createApp } from "./app";
 import { startMonitoring } from "./services/monitoring";
 import { startLifecycle } from "./services/monitoring/lifecycle";
 import { freePort } from "./utils/freePort";
-import { ensureSystemRoles } from "./utils/systemRoles";
+import { ensureSystemRoles, ensureSuperAdmins } from "./utils/systemRoles";
 import { ensureDefaultProject } from "./utils/ensureDefaultProject";
 
 async function bootstrap(): Promise<void> {
@@ -24,6 +24,7 @@ async function bootstrap(): Promise<void> {
 
   await connectDatabase();
   await ensureSystemRoles();
+  await ensureSuperAdmins();
   await ensureDefaultProject();
 
   const app = createApp();

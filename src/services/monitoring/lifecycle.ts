@@ -6,7 +6,11 @@ import { UptimeStat } from "../../models/uptimeStat.model";
 import { User } from "../../models/user.model";
 import { logger } from "../../config/logger";
 import { sendEmail, monitorExpiringEmail, monitorExpiredEmail, domainExpiringEmail } from "../mailer";
-import { notifyChannels } from "../channels";
+import { notifyChannels, pulseChat, chatMonitorLink } from "../channels";
+import { projectNameOf } from "../../utils/projectName";
+
+/** Short date like "12 Aug 2026". */
+const shortDate = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 import { probeDomainExpiry } from "./domainProbe";
 import { DOMAIN_WARN_DAYS } from "../../utils/constants";
 
@@ -51,19 +55,38 @@ export async function runLifecycle(): Promise<void> {
     if (exp.getTime() <= now.getTime()) {
       await Monitor.updateOne({ _id: m._id }, { softDeletedAt: now, enabled: false, status: "paused" });
       const to = await recipients(m);
-      await sendEmail(monitorExpiredEmail({ to, monitorName: m.name, url: m.url }));
+      const monitorId = String(m._id);
+      await sendEmail(monitorExpiredEmail({ to, monitorName: m.name, url: m.url, monitorId }));
       await notifyChannels(
         m.channels,
-        `🗑️ Monitoring ended for *${m.name}* (${m.url}). It will be permanently deleted in ${PURGE_AFTER_DAYS} days unless restored.`,
+        pulseChat({
+          status: "warn",
+          title: `Monitoring ended — ${m.name}`,
+          rows: [
+            ["URL", m.url],
+            ["Note", `Archived now; permanently deleted in ${PURGE_AFTER_DAYS} days unless restored.`],
+          ],
+          button: { text: "Restore monitor", url: chatMonitorLink(monitorId) },
+        }),
       );
       logger.info({ monitorId: String(m._id) }, "Monitor soft-deleted (period ended)");
     } else if (REMINDER_DAYS.includes(daysRemaining) && !(m.expiryRemindersSent ?? []).includes(daysRemaining)) {
       await Monitor.updateOne({ _id: m._id }, { $addToSet: { expiryRemindersSent: daysRemaining } });
       const to = await recipients(m);
-      await sendEmail(monitorExpiringEmail({ to, monitorName: m.name, url: m.url, daysRemaining, expiresAt: exp.toISOString() }));
+      const monitorId = String(m._id);
+      await sendEmail(monitorExpiringEmail({ to, monitorName: m.name, url: m.url, daysRemaining, expiresAt: exp.toISOString(), monitorId }));
       await notifyChannels(
         m.channels,
-        `⏳ Monitoring for *${m.name}* (${m.url}) ends in ${daysRemaining} day(s) on ${exp.toDateString()}. Extend it to keep monitoring.`,
+        pulseChat({
+          status: "warn",
+          title: `Monitoring ends in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
+          subtitle: m.name,
+          rows: [
+            ["URL", m.url],
+            ["Ends on", shortDate(exp)],
+          ],
+          button: { text: "Extend monitoring", url: chatMonitorLink(monitorId) },
+        }),
       );
       logger.info({ monitorId: String(m._id), daysRemaining }, "Expiry reminder sent");
     }
@@ -104,12 +127,24 @@ export async function runLifecycle(): Promise<void> {
       } catch {
         /* keep url */
       }
+      const project = await projectNameOf((m as { projectId?: unknown }).projectId);
+      const monitorId = String(m._id);
       await sendEmail(
-        domainExpiringEmail({ to, domain, monitorName: m.name, expiresAt: expiresAt.toISOString(), daysRemaining: days }),
+        domainExpiringEmail({ to, domain, monitorName: m.name, expiresAt: expiresAt.toISOString(), daysRemaining: days, monitorId, project }),
       );
       await notifyChannels(
         m.channels,
-        `🌐 Domain *${domain}* (monitor *${m.name}*) expires in ${days} day(s) on ${expiresAt.toDateString()}. Renew it before it lapses.`,
+        pulseChat({
+          status: "down",
+          title: `Domain expiring in ${days} day${days === 1 ? "" : "s"}`,
+          subtitle: domain,
+          rows: [
+            ["Monitor", m.name],
+            ["Domain", domain],
+            ["Expires", shortDate(expiresAt)],
+          ],
+          button: { text: "View monitor", url: chatMonitorLink(monitorId) },
+        }),
       );
       logger.info({ monitorId: String(m._id), days }, "Domain expiry warning sent");
     }

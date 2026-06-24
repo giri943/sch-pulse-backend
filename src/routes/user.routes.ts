@@ -13,7 +13,9 @@ import { PERMISSIONS as P } from "../utils/permissions";
 const createUserSchema = z.object({
   name: z.string().min(2),
   email: z.string().email().toLowerCase(),
-  password: passwordSchema,
+  // Optional: when omitted, the new user is emailed an invite link to set their
+  // own password (or they sign in with Google).
+  password: passwordSchema.optional(),
   roleId: objectId,
 });
 const updateUserSchema = z.object({

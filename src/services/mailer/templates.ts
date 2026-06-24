@@ -1,26 +1,114 @@
 import type { EmailMessage } from "./index";
+import { config } from "../../config";
 
 interface RecommendationSnap {
   title: string;
   steps: string[];
 }
 
-function shell(title: string, bodyHtml: string): string {
-  return `<!doctype html><html><body style="font-family:system-ui,Segoe UI,Arial,sans-serif;background:#0b0e14;color:#e6e9ef;padding:24px">
-  <div style="max-width:560px;margin:0 auto;background:#11151d;border:1px solid #1e2530;border-radius:12px;padding:24px">
-  <h2 style="margin:0 0 16px">${title}</h2>${bodyHtml}
-  <p style="color:#6b7280;font-size:12px;margin-top:24px">Schbang Pulse · automated monitoring alert</p>
-  </div></body></html>`;
+// ── Palette (light, high-deliverability — renders consistently across clients) ──
+const BRAND = "#6366f1";
+const NAVY = "#172b4d";
+const TEXT = "#243044";
+const MUTED = "#6b7280";
+const BG = "#f4f5f7";
+const CARD = "#ffffff";
+const BORDER = "#e5e7eb";
+const SOFT = "#f8fafc";
+
+const ACCENT = {
+  down: "#e5484d",
+  up: "#2da44e",
+  warn: "#d97706",
+  info: BRAND,
+} as const;
+type Accent = keyof typeof ACCENT;
+
+/** Escape user-controlled text before putting it in HTML (prevents injection). */
+function esc(v: unknown): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const monitorLink = (id?: string): string | null => (id && config.appBaseUrl ? `${config.appBaseUrl}/monitors/${id}` : null);
+
+function button(label: string, url?: string | null): string {
+  if (!url) return "";
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:22px 0 4px"><tr>
+    <td style="border-radius:8px;background:${BRAND}">
+      <a href="${esc(url)}" style="display:inline-block;padding:11px 22px;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px">${esc(label)}</a>
+    </td></tr></table>`;
+}
+
+/** A clean label/value details table; values are escaped here. */
+function details(rows: [string, string | null | undefined][]): string {
+  const visible = rows.filter(([, v]) => v != null && v !== "");
+  if (!visible.length) return "";
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 4px;border-collapse:collapse">
+    ${visible
+      .map(
+        ([k, v], i) => `<tr>
+        <td style="padding:10px 0;${i ? `border-top:1px solid ${BORDER};` : ""}width:36%;color:${MUTED};font-size:13px;vertical-align:top">${esc(k)}</td>
+        <td style="padding:10px 0;${i ? `border-top:1px solid ${BORDER};` : ""}color:${TEXT};font-size:13px;font-weight:500;vertical-align:top;word-break:break-word">${esc(v)}</td>
+      </tr>`,
+      )
+      .join("")}
+  </table>`;
 }
 
 function recsHtml(recs: RecommendationSnap[]): string {
   if (!recs.length) return "";
-  return `<div style="margin-top:16px;padding:12px;background:#0f141c;border-radius:8px">
-    <strong>Suggested checks:</strong>${recs
-      .map((r) => `<div style="margin-top:8px"><b>${r.title}</b><ul>${r.steps.map((s) => `<li>${s}</li>`).join("")}</ul></div>`)
-      .join("")}</div>`;
+  return `<div style="margin:18px 0 4px;padding:14px 16px;background:${SOFT};border:1px solid ${BORDER};border-radius:10px">
+    <div style="font-size:13px;font-weight:700;color:${NAVY};margin-bottom:8px">Suggested next steps</div>
+    ${recs
+      .map(
+        (r) => `<div style="margin-bottom:10px">
+        <div style="font-size:13px;font-weight:600;color:${TEXT}">${esc(r.title)}</div>
+        <ul style="margin:4px 0 0;padding-left:18px;color:${MUTED};font-size:13px;line-height:1.5">${r.steps.map((s) => `<li style="margin:2px 0">${esc(s)}</li>`).join("")}</ul>
+      </div>`,
+      )
+      .join("")}
+  </div>`;
 }
 
+/** The shared email frame. `intro` and `bodyHtml` may contain trusted HTML; escape dynamic values before passing. */
+function shell(opts: { accent: Accent; eyebrow: string; title: string; intro?: string; bodyHtml?: string; footerNote?: string }): string {
+  const accent = ACCENT[opts.accent];
+  const preheader = opts.title;
+  return `<!doctype html><html lang="en"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only">
+  </head><body style="margin:0;padding:0;background:${BG};-webkit-font-smoothing:antialiased">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${esc(preheader)}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BG};padding:24px 12px">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:${CARD};border:1px solid ${BORDER};border-radius:14px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+        <tr><td style="height:4px;background:${accent};font-size:0;line-height:0">&nbsp;</td></tr>
+        <tr><td style="padding:22px 28px 0">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            <td style="font-size:15px;font-weight:700;color:${NAVY};letter-spacing:-0.01em"><span style="color:${BRAND}">&#9679;</span>&nbsp;Schbang Pulse</td>
+            <td align="right" style="font-size:11px;font-weight:700;color:${accent};text-transform:uppercase;letter-spacing:0.06em">${esc(opts.eyebrow)}</td>
+          </tr></table>
+        </td></tr>
+        <tr><td style="padding:14px 28px 26px">
+          <h1 style="margin:6px 0 0;font-size:21px;line-height:1.3;color:${NAVY};font-weight:700;letter-spacing:-0.02em">${esc(opts.title)}</h1>
+          ${opts.intro ? `<p style="margin:10px 0 0;font-size:14px;line-height:1.6;color:${TEXT}">${opts.intro}</p>` : ""}
+          ${opts.bodyHtml ?? ""}
+        </td></tr>
+        <tr><td style="padding:16px 28px;border-top:1px solid ${BORDER};background:${SOFT}">
+          <p style="margin:0;font-size:12px;line-height:1.55;color:${MUTED}">${opts.footerNote ? esc(opts.footerNote) + "<br>" : ""}Sent by Schbang Pulse — automated monitoring. Please don't reply to this message.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table></body></html>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Incident: opened
+// ─────────────────────────────────────────────────────────────────────────────
 export function incidentOpenedEmail(p: {
   to: string[];
   monitorName: string;
@@ -29,86 +117,164 @@ export function incidentOpenedEmail(p: {
   statusCode?: number;
   timestamp: string;
   recommendations: RecommendationSnap[];
+  monitorId?: string;
+  project?: string;
 }): EmailMessage {
-  const subject = `[DOWN] ${p.monitorName}`;
-  const rows = `<p><b>URL:</b> ${p.url}</p><p><b>Error:</b> ${p.error}</p><p><b>Response code:</b> ${p.statusCode ?? "—"}</p><p><b>Detected at:</b> ${p.timestamp}</p>`;
+  const subject = `[Schbang Pulse] ${p.monitorName} is DOWN`;
+  const link = monitorLink(p.monitorId);
+  const intro = `We detected that <strong>${esc(p.monitorName)}</strong> stopped responding to our checks. The incident is open and we'll let you know the moment it recovers.`;
+  const body =
+    details([
+      ["Project", p.project],
+      ["URL", p.url],
+      ["Error", p.error],
+      ["Response code", p.statusCode != null ? String(p.statusCode) : "—"],
+      ["Detected at", fmtWhen(p.timestamp)],
+    ]) +
+    recsHtml(p.recommendations) +
+    button("View incident", link);
   return {
     to: p.to,
     subject,
-    html: shell(`🔴 ${p.monitorName} is DOWN`, rows + recsHtml(p.recommendations)),
-    text: `${subject}\nURL: ${p.url}\nError: ${p.error}\nCode: ${p.statusCode ?? "-"}\nAt: ${p.timestamp}`,
+    html: shell({ accent: "down", eyebrow: "Incident · Down", title: `${p.monitorName} is down`, intro, bodyHtml: body, footerNote: footerFor(p.monitorName) }),
+    text: textBlock(subject, [
+      ["Project", p.project],
+      ["URL", p.url],
+      ["Error", p.error],
+      ["Response code", p.statusCode != null ? String(p.statusCode) : "—"],
+      ["Detected at", fmtWhen(p.timestamp)],
+      ["View", link],
+    ]),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Incident: resolved
+// ─────────────────────────────────────────────────────────────────────────────
 export function incidentResolvedEmail(p: {
   to: string[];
   monitorName: string;
   url: string;
   downtime: string;
   recoveredAt: string;
+  monitorId?: string;
+  project?: string;
 }): EmailMessage {
-  const subject = `[RECOVERED] ${p.monitorName}`;
-  const rows = `<p><b>URL:</b> ${p.url}</p><p><b>Downtime duration:</b> ${p.downtime}</p><p><b>Recovered at:</b> ${p.recoveredAt}</p>`;
+  const subject = `[Schbang Pulse] ${p.monitorName} has recovered`;
+  const link = monitorLink(p.monitorId);
+  const intro = `<strong>${esc(p.monitorName)}</strong> is responding normally again. The incident is now resolved.`;
+  const body =
+    details([
+      ["Project", p.project],
+      ["URL", p.url],
+      ["Total downtime", p.downtime],
+      ["Recovered at", fmtWhen(p.recoveredAt)],
+    ]) + button("View monitor", link);
   return {
     to: p.to,
     subject,
-    html: shell(`🟢 ${p.monitorName} has RECOVERED`, rows),
-    text: `${subject}\nURL: ${p.url}\nDowntime: ${p.downtime}\nRecovered: ${p.recoveredAt}`,
+    html: shell({ accent: "up", eyebrow: "Incident · Resolved", title: `${p.monitorName} recovered`, intro, bodyHtml: body, footerNote: footerFor(p.monitorName) }),
+    text: textBlock(subject, [
+      ["Project", p.project],
+      ["URL", p.url],
+      ["Total downtime", p.downtime],
+      ["Recovered at", fmtWhen(p.recoveredAt)],
+      ["View", link],
+    ]),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SSL expiry warning
+// ─────────────────────────────────────────────────────────────────────────────
 export function sslWarningEmail(p: {
   to: string[];
   domain: string;
   expiresAt: string;
   daysRemaining: number;
+  monitorId?: string;
+  monitorName?: string;
+  project?: string;
 }): EmailMessage {
-  const subject = `[SSL EXPIRY WARNING] ${p.domain}`;
-  const rows = `<p><b>Domain:</b> ${p.domain}</p><p><b>Expiry date:</b> ${p.expiresAt}</p><p><b>Remaining days:</b> ${p.daysRemaining}</p>`;
+  const subject = `[Schbang Pulse] SSL expires in ${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"} — ${p.monitorName ?? p.domain}`;
+  const link = monitorLink(p.monitorId);
+  const intro = `The SSL certificate for <strong>${esc(p.domain)}</strong> expires in <strong>${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"}</strong>. Renew it before then to avoid browser security warnings and downtime.`;
+  const body =
+    details([
+      ["Project", p.project],
+      ["Monitor", p.monitorName],
+      ["Domain", p.domain],
+      ["Expires on", fmtDate(p.expiresAt)],
+      ["Days remaining", String(p.daysRemaining)],
+    ]) + button("View monitor", link);
   return {
     to: p.to,
     subject,
-    html: shell(`⚠️ SSL certificate expiring in ${p.daysRemaining} days`, rows),
-    text: `${subject}\nDomain: ${p.domain}\nExpires: ${p.expiresAt}\nDays left: ${p.daysRemaining}`,
+    html: shell({ accent: "warn", eyebrow: "SSL · Expiring", title: `SSL certificate expiring in ${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"}`, intro, bodyHtml: body }),
+    text: textBlock(subject, [
+      ["Domain", p.domain],
+      ["Expires on", fmtDate(p.expiresAt)],
+      ["Days remaining", String(p.daysRemaining)],
+      ["View", link],
+    ]),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Domain registration expiry warning
+// ─────────────────────────────────────────────────────────────────────────────
 export function domainExpiringEmail(p: {
   to: string[];
   domain: string;
   monitorName: string;
   expiresAt: string;
   daysRemaining: number;
+  monitorId?: string;
+  project?: string;
 }): EmailMessage {
-  const subject = `[DOMAIN EXPIRY WARNING] ${p.domain} — ${p.daysRemaining} day(s) left`;
-  const rows = `<p><b>Domain:</b> ${p.domain}</p><p><b>Monitor:</b> ${p.monitorName}</p>
-    <p><b>Registration expires:</b> ${new Date(p.expiresAt).toDateString()} (${p.daysRemaining} day(s))</p>
-    <p>Renew the domain with your registrar before it lapses — an expired domain takes the site offline
-    and can be lost.</p>`;
+  const subject = `[Schbang Pulse] Domain expires in ${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"} — ${p.domain}`;
+  const link = monitorLink(p.monitorId);
+  const intro = `The domain registration for <strong>${esc(p.domain)}</strong> expires in <strong>${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"}</strong>. An expired domain takes the entire site and email offline — and can be lost to another buyer. Renew it with your registrar now.`;
+  const body =
+    details([
+      ["Project", p.project],
+      ["Monitor", p.monitorName],
+      ["Domain", p.domain],
+      ["Registration expires", fmtDate(p.expiresAt)],
+      ["Days remaining", String(p.daysRemaining)],
+    ]) + button("View monitor", link);
   return {
     to: p.to,
     subject,
-    html: shell(`🌐 Domain expiring in ${p.daysRemaining} days`, rows),
-    text: `${subject}\nDomain: ${p.domain}\nExpires: ${new Date(p.expiresAt).toDateString()}\nDays left: ${p.daysRemaining}`,
+    html: shell({ accent: "down", eyebrow: "Domain · Expiring", title: `Domain expiring in ${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"}`, intro, bodyHtml: body }),
+    text: textBlock(subject, [
+      ["Domain", p.domain],
+      ["Registration expires", fmtDate(p.expiresAt)],
+      ["Days remaining", String(p.daysRemaining)],
+      ["View", link],
+    ]),
   };
 }
 
-export function testNotificationEmail(p: {
-  to: string[];
-  monitorName: string;
-  url: string;
-}): EmailMessage {
-  const subject = `[TEST] ${p.monitorName} — Schbang Pulse`;
-  const rows = `<p>This is a <b>test notification</b> for <b>${p.monitorName}</b> (${p.url}).</p>
-    <p>If you received this email, alerts for this monitor are configured correctly. ✅</p>`;
+// ─────────────────────────────────────────────────────────────────────────────
+// Test notification
+// ─────────────────────────────────────────────────────────────────────────────
+export function testNotificationEmail(p: { to: string[]; monitorName: string; url: string; monitorId?: string }): EmailMessage {
+  const subject = `[Schbang Pulse] Test alert — ${p.monitorName}`;
+  const link = monitorLink(p.monitorId);
+  const intro = `This is a test alert for <strong>${esc(p.monitorName)}</strong>. If it reached your inbox, notifications for this monitor are set up correctly.`;
+  const body = details([["Monitor", p.monitorName], ["URL", p.url]]) + button("View monitor", link);
   return {
     to: p.to,
     subject,
-    html: shell(`🔔 Test notification`, rows),
-    text: `${subject}\nThis is a test notification for ${p.monitorName} (${p.url}). Alerts are configured correctly.`,
+    html: shell({ accent: "info", eyebrow: "Test", title: "Notifications are working", intro, bodyHtml: body }),
+    text: textBlock(subject, [["Monitor", p.monitorName], ["URL", p.url], ["View", link]]),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Project: join request (to owners)
+// ─────────────────────────────────────────────────────────────────────────────
 export function projectJoinRequestEmail(p: {
   to: string[];
   projectName: string;
@@ -116,100 +282,192 @@ export function projectJoinRequestEmail(p: {
   requesterEmail: string;
   message?: string;
 }): EmailMessage {
-  const subject = `[ACCESS REQUEST] ${p.requesterName} wants to join ${p.projectName}`;
-  const rows = `<p><b>${p.requesterName}</b> (${p.requesterEmail}) has requested access to the project
-    <b>${p.projectName}</b>.</p>${p.message ? `<p style="color:#6b7280">“${p.message}”</p>` : ""}
-    <p>Review it in Schbang Pulse → the project's <b>Members</b> tab to approve or decline.</p>`;
+  const subject = `[Schbang Pulse] ${p.requesterName} requested access to ${p.projectName}`;
+  const link = config.appBaseUrl ? `${config.appBaseUrl}/projects` : null;
+  const intro = `<strong>${esc(p.requesterName)}</strong> (${esc(p.requesterEmail)}) is requesting access to the <strong>${esc(p.projectName)}</strong> project.`;
+  const body =
+    details([
+      ["Project", p.projectName],
+      ["Requested by", `${p.requesterName} (${p.requesterEmail})`],
+      ["Message", p.message],
+    ]) +
+    `<p style="margin:14px 0 0;font-size:13px;color:${MUTED}">Open the project's <strong>Members</strong> tab to approve with a role, or decline.</p>` +
+    button("Review request", link);
   return {
     to: p.to,
     subject,
-    html: shell("👥 New access request", rows),
-    text: `${subject}\n${p.requesterName} (${p.requesterEmail}) requested access to ${p.projectName}.${p.message ? `\nMessage: ${p.message}` : ""}`,
+    html: shell({ accent: "info", eyebrow: "Access request", title: "New access request", intro, bodyHtml: body }),
+    text: textBlock(subject, [
+      ["Project", p.projectName],
+      ["Requested by", `${p.requesterName} (${p.requesterEmail})`],
+      ["Message", p.message],
+      ["Review", link],
+    ]),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Project: join decision (to requester)
+// ─────────────────────────────────────────────────────────────────────────────
 export function projectJoinDecisionEmail(p: {
   to: string[];
   projectName: string;
   accepted: boolean;
   deciderName: string;
   role?: string;
+  projectId?: string;
 }): EmailMessage {
-  const subject = `[${p.accepted ? "ACCESS GRANTED" : "ACCESS DECLINED"}] ${p.projectName}`;
-  const rows = p.accepted
-    ? `<p><b>${p.deciderName}</b> accepted your request to join <b>${p.projectName}</b> as <b>${p.role}</b>.</p>
-       <p>You can now see this project's monitors on your dashboard.</p>`
-    : `<p><b>${p.deciderName}</b> declined your request to join <b>${p.projectName}</b>.</p>`;
+  const subject = `[Schbang Pulse] Your request to join ${p.projectName} was ${p.accepted ? "approved" : "declined"}`;
+  const link = p.accepted && config.appBaseUrl ? `${config.appBaseUrl}/projects/${p.projectId ?? ""}` : config.appBaseUrl ? `${config.appBaseUrl}/projects` : null;
+  const intro = p.accepted
+    ? `<strong>${esc(p.deciderName)}</strong> approved your request to join <strong>${esc(p.projectName)}</strong> as <strong>${esc(p.role ?? "member")}</strong>. Its monitors now appear on your dashboard.`
+    : `<strong>${esc(p.deciderName)}</strong> declined your request to join <strong>${esc(p.projectName)}</strong>. Reach out to a project owner if you think you still need access.`;
+  const body = p.accepted ? button("Open project", link) : "";
   return {
     to: p.to,
     subject,
-    html: shell(p.accepted ? "✅ Request accepted" : "🚫 Request declined", rows),
-    text: `${subject}\n${p.deciderName} ${p.accepted ? `accepted your request to join ${p.projectName} as ${p.role}` : `declined your request to join ${p.projectName}`}.`,
+    html: shell({ accent: p.accepted ? "up" : "info", eyebrow: p.accepted ? "Access granted" : "Access declined", title: p.accepted ? "Request approved" : "Request declined", intro, bodyHtml: body }),
+    text: textBlock(subject, [["Project", p.projectName], ["Decision", p.accepted ? `Approved as ${p.role ?? "member"}` : "Declined"], ["By", p.deciderName], ["Open", p.accepted ? link : null]]),
   };
 }
 
-export function monitorJoinedEmail(p: {
+// ─────────────────────────────────────────────────────────────────────────────
+// Monitor: someone joined
+// ─────────────────────────────────────────────────────────────────────────────
+export function monitorJoinedEmail(p: { to: string[]; monitorName: string; url: string; joinerName: string; monitorId?: string }): EmailMessage {
+  const subject = `[Schbang Pulse] ${p.joinerName} joined ${p.monitorName}`;
+  const link = monitorLink(p.monitorId);
+  const intro = `<strong>${esc(p.joinerName)}</strong> joined monitoring for <strong>${esc(p.monitorName)}</strong>. They'll now receive its alerts and see it on their dashboard.`;
+  const body = details([["Monitor", p.monitorName], ["URL", p.url], ["Joined by", p.joinerName]]) + button("View monitor", link);
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "info", eyebrow: "Monitor · Member", title: "New member joined", intro, bodyHtml: body }),
+    text: textBlock(subject, [["Monitor", p.monitorName], ["URL", p.url], ["Joined by", p.joinerName], ["View", link]]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// New user invite (admin created the account)
+// ─────────────────────────────────────────────────────────────────────────────
+export function userInviteEmail(p: {
   to: string[];
-  monitorName: string;
-  url: string;
-  joinerName: string;
+  name: string;
+  email: string;
+  roleName: string;
+  inviterName: string;
+  setupUrl: string;
 }): EmailMessage {
-  const subject = `[MONITOR JOINED] ${p.monitorName}`;
-  const rows = `<p><b>${p.joinerName}</b> joined monitoring for <b>${p.monitorName}</b> (${p.url}).</p>
-    <p>They'll now receive this monitor's alerts and see it on their dashboard.</p>`;
+  const subject = "[Schbang Pulse] You've been added — set up your account";
+  const intro = `<strong>${esc(p.inviterName)}</strong> created a Schbang Pulse account for you. Pulse is Schbang's uptime &amp; health monitoring for client websites, APIs, SSL certificates and domains. Set your password to get started — or just sign in with your Schbang Google account.`;
+  const body =
+    details([
+      ["Email", p.email],
+      ["Role", p.roleName],
+    ]) +
+    button("Set your password", p.setupUrl) +
+    (config.appBaseUrl
+      ? `<p style="margin:14px 0 0;font-size:13px;color:${MUTED};line-height:1.55">Prefer Google? Sign in at <a href="${esc(config.appBaseUrl)}" style="color:${BRAND}">${esc(config.appBaseUrl)}</a> with your Schbang account — no password needed.</p>`
+      : "");
   return {
     to: p.to,
     subject,
-    html: shell("👥 New member joined a monitor", rows),
-    text: `${subject}\n${p.joinerName} joined monitoring for ${p.monitorName} (${p.url}).`,
+    html: shell({
+      accent: "info",
+      eyebrow: "Welcome",
+      title: "Welcome to Schbang Pulse",
+      intro,
+      bodyHtml: body,
+      footerNote: 'This invite link expires in 7 days. If it lapses, use "Forgot password" on the sign-in page to get a new one.',
+    }),
+    text: textBlock(subject, [
+      ["Email", p.email],
+      ["Role", p.roleName],
+      ["Invited by", p.inviterName],
+      ["Set your password", p.setupUrl],
+    ]),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Password reset
+// ─────────────────────────────────────────────────────────────────────────────
 export function passwordResetEmail(p: { to: string[]; resetUrl: string }): EmailMessage {
-  const subject = "Reset your Schbang Pulse password";
-  const rows = `<p>We received a request to reset your password.</p>
-    <p><a href="${p.resetUrl}" style="display:inline-block;background:#6366f1;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;margin-top:8px">Reset password</a></p>
-    <p style="color:#6b7280;font-size:12px;margin-top:16px">This link expires in 1 hour. If you didn't request this, you can ignore this email.</p>
-    <p style="color:#6b7280;font-size:12px;word-break:break-all">${p.resetUrl}</p>`;
+  const subject = "[Schbang Pulse] Reset your password";
+  const intro = `We received a request to reset your Schbang Pulse password. Click the button below to choose a new one. This link expires in <strong>1 hour</strong>.`;
+  const body =
+    button("Reset password", p.resetUrl) +
+    `<p style="margin:16px 0 0;font-size:12px;color:${MUTED};line-height:1.55">If the button doesn't work, copy and paste this link:<br>
+      <span style="word-break:break-all;color:${BRAND}">${esc(p.resetUrl)}</span></p>`;
   return {
     to: p.to,
     subject,
-    html: shell("🔑 Password reset", rows),
+    html: shell({ accent: "info", eyebrow: "Security", title: "Reset your password", intro, bodyHtml: body, footerNote: "If you didn't request this, you can safely ignore this email — your password won't change." }),
     text: `Reset your Schbang Pulse password:\n${p.resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, ignore this email.`,
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Monitoring period: ending soon
+// ─────────────────────────────────────────────────────────────────────────────
 export function monitorExpiringEmail(p: {
   to: string[];
   monitorName: string;
   url: string;
   daysRemaining: number;
   expiresAt: string;
+  monitorId?: string;
 }): EmailMessage {
-  const subject = `[MONITORING ENDING] ${p.monitorName} — ${p.daysRemaining} day(s) left`;
-  const rows = `<p><b>${p.monitorName}</b> (${p.url})</p>
-    <p>The monitoring period ends in <b>${p.daysRemaining} day(s)</b> on ${new Date(p.expiresAt).toDateString()}.</p>
-    <p>To keep monitoring this service, <b>extend the period</b> from the monitor's page. If it is not
-    extended, the monitor will be removed and permanently deleted 7 days later.</p>`;
+  const subject = `[Schbang Pulse] Monitoring ends in ${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"} — ${p.monitorName}`;
+  const link = monitorLink(p.monitorId);
+  const intro = `The monitoring period for <strong>${esc(p.monitorName)}</strong> ends in <strong>${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"}</strong>. Extend it to keep tracking this service — otherwise the monitor is archived, then permanently deleted 7 days later.`;
+  const body = details([["Monitor", p.monitorName], ["URL", p.url], ["Ends on", fmtDate(p.expiresAt)]]) + button("Extend monitoring", link);
   return {
     to: p.to,
     subject,
-    html: shell(`⏳ Monitoring ending soon`, rows),
-    text: `${subject}\n${p.monitorName} (${p.url}) monitoring ends in ${p.daysRemaining} day(s) on ${new Date(p.expiresAt).toDateString()}. Extend to keep monitoring.`,
+    html: shell({ accent: "warn", eyebrow: "Monitoring · Ending", title: `Monitoring ends in ${p.daysRemaining} day${p.daysRemaining === 1 ? "" : "s"}`, intro, bodyHtml: body }),
+    text: textBlock(subject, [["Monitor", p.monitorName], ["URL", p.url], ["Ends on", fmtDate(p.expiresAt)], ["Extend", link]]),
   };
 }
 
-export function monitorExpiredEmail(p: { to: string[]; monitorName: string; url: string }): EmailMessage {
-  const subject = `[MONITORING ENDED] ${p.monitorName}`;
-  const rows = `<p><b>${p.monitorName}</b> (${p.url})</p>
-    <p>The monitoring period has ended, so monitoring has stopped and the monitor has been archived.</p>
-    <p>It will be <b>permanently deleted in 7 days</b>. Restore it before then if this was unintended.</p>`;
+// ─────────────────────────────────────────────────────────────────────────────
+// Monitoring period: ended
+// ─────────────────────────────────────────────────────────────────────────────
+export function monitorExpiredEmail(p: { to: string[]; monitorName: string; url: string; monitorId?: string }): EmailMessage {
+  const subject = `[Schbang Pulse] Monitoring ended — ${p.monitorName}`;
+  const link = monitorLink(p.monitorId);
+  const intro = `The monitoring period for <strong>${esc(p.monitorName)}</strong> has ended, so checks have stopped and the monitor is archived. It will be <strong>permanently deleted in 7 days</strong> — restore it before then if this wasn't intended.`;
+  const body = details([["Monitor", p.monitorName], ["URL", p.url]]) + button("Restore monitor", link);
   return {
     to: p.to,
     subject,
-    html: shell(`🗑️ Monitoring ended`, rows),
-    text: `${subject}\n${p.monitorName} (${p.url}) monitoring ended and was archived. Permanent deletion in 7 days unless restored.`,
+    html: shell({ accent: "warn", eyebrow: "Monitoring · Ended", title: "Monitoring ended", intro, bodyHtml: body }),
+    text: textBlock(subject, [["Monitor", p.monitorName], ["URL", p.url], ["Restore", link]]),
   };
+}
+
+// ── helpers ──
+
+function footerFor(monitorName: string): string {
+  return `You're receiving this because you're a recipient for "${monitorName}".`;
+}
+
+/** Format an ISO timestamp as a readable date-time. */
+function fmtWhen(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Format an ISO date as a readable date. */
+function fmtDate(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/** Plain-text body for non-HTML clients. */
+function textBlock(subject: string, rows: [string, string | null | undefined][]): string {
+  const lines = rows.filter(([, v]) => v != null && v !== "").map(([k, v]) => `${k}: ${v}`);
+  return `${subject}\n\n${lines.join("\n")}`;
 }
 
 /** Format seconds as a human downtime string. */

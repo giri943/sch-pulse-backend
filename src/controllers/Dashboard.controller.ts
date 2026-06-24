@@ -1,15 +1,26 @@
 import type { Request, Response } from "express";
+import { Types } from "mongoose";
 import { Monitor } from "../models/monitor.model";
 import { Incident } from "../models/incident.model";
 import { UptimeStat } from "../models/uptimeStat.model";
 import { SSL_WARN_DAYS, type UptimeRange } from "../utils/constants";
+
+/** Domains within this window are surfaced on the dashboard — more lead time than SSL,
+ *  since registration renewal (and recovery from a lapse) is slower and higher-stakes. */
+const DOMAIN_HORIZON_DAYS = 60;
 import { accessibleMonitorIds } from "../utils/access";
+import { sparklines } from "../utils/sparkline";
 
 const RANGE_MS: Record<UptimeRange, number> = {
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
   "30d": 30 * 24 * 60 * 60 * 1000,
 };
+
+/** Read a populated project's name (or null) from a monitor's projectId field. */
+function projectName(p: unknown): string | null {
+  return p && typeof p === "object" && "name" in p ? String((p as { name: unknown }).name) : null;
+}
 
 /** Build { _id/monitorId in ids } clauses, or {} when the user has full access. */
 async function scope(req: Request) {
@@ -63,6 +74,9 @@ export async function uptimeOverview(req: Request, res: Response): Promise<void>
       t: r._id,
       uptime: r.count ? Number(((r.ups / r.count) * 100).toFixed(2)) : null,
       avgResponseMs: r.count ? Math.round(r.sumResponseMs / r.count) : null,
+      // Raw counts so the client can compute an accurate range-wide uptime.
+      ups: r.ups,
+      count: r.count,
     })),
   });
 }
@@ -72,7 +86,7 @@ export async function recentIncidents(req: Request, res: Response): Promise<void
   const data = await Incident.find(byMonitorId)
     .sort({ startedAt: -1 })
     .limit(10)
-    .populate("monitorId", "name url")
+    .populate({ path: "monitorId", select: "name url projectId", populate: { path: "projectId", select: "name" } })
     .lean();
   res.json(data);
 }
@@ -81,6 +95,7 @@ export async function sslExpiring(req: Request, res: Response): Promise<void> {
   const { monitorFilter } = await scope(req);
   const horizon = new Date(Date.now() + SSL_WARN_DAYS[0] * 24 * 60 * 60 * 1000);
   const monitors = await Monitor.find({ ...monitorFilter, sslExpiresAt: { $ne: null, $lte: horizon } })
+    .populate("projectId", "name")
     .sort({ sslExpiresAt: 1 })
     .lean();
   res.json(
@@ -88,6 +103,7 @@ export async function sslExpiring(req: Request, res: Response): Promise<void> {
       monitorId: String(m._id),
       name: m.name,
       url: m.url,
+      project: projectName(m.projectId),
       sslExpiresAt: m.sslExpiresAt,
       daysRemaining: m.sslExpiresAt
         ? Math.ceil((new Date(m.sslExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
@@ -96,19 +112,45 @@ export async function sslExpiring(req: Request, res: Response): Promise<void> {
   );
 }
 
-export async function statusBoard(req: Request, res: Response): Promise<void> {
+export async function domainExpiring(req: Request, res: Response): Promise<void> {
   const { monitorFilter } = await scope(req);
-  const monitors = await Monitor.find(monitorFilter)
-    .select("name url status lastResponseTimeMs")
-    .sort({ status: 1, name: 1 })
+  const horizon = new Date(Date.now() + DOMAIN_HORIZON_DAYS * 24 * 60 * 60 * 1000);
+  const monitors = await Monitor.find({ ...monitorFilter, domainExpiresAt: { $ne: null, $lte: horizon } })
+    .populate("projectId", "name")
+    .sort({ domainExpiresAt: 1 })
     .lean();
   res.json(
     monitors.map((m) => ({
       monitorId: String(m._id),
       name: m.name,
       url: m.url,
+      project: projectName(m.projectId),
+      domainExpiresAt: m.domainExpiresAt,
+      daysRemaining: m.domainExpiresAt
+        ? Math.ceil((new Date(m.domainExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
+        : null,
+    })),
+  );
+}
+
+export async function statusBoard(req: Request, res: Response): Promise<void> {
+  const { monitorFilter } = await scope(req);
+  const monitors = await Monitor.find(monitorFilter)
+    .select("name url status enabled lastResponseTimeMs projectId")
+    .populate("projectId", "name")
+    .sort({ status: 1, name: 1 })
+    .lean();
+  const sparks = await sparklines(monitors.map((m) => m._id as Types.ObjectId));
+  res.json(
+    monitors.map((m) => ({
+      monitorId: String(m._id),
+      name: m.name,
+      url: m.url,
+      project: projectName(m.projectId),
       status: m.status,
+      enabled: m.enabled,
       lastResponseTimeMs: m.lastResponseTimeMs ?? null,
+      spark: sparks.get(String(m._id))?.spark ?? [],
     })),
   );
 }
