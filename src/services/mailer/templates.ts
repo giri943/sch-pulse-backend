@@ -348,6 +348,29 @@ export function monitorJoinedEmail(p: { to: string[]; monitorName: string; url: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Project ownership transferred (e.g. previous owner's account was deleted)
+// ─────────────────────────────────────────────────────────────────────────────
+export function projectOwnershipEmail(p: {
+  to: string[];
+  ownerName: string;
+  formerOwnerName: string;
+  byName: string;
+  projects: string[];
+}): EmailMessage {
+  const many = p.projects.length > 1;
+  const subject = `[Schbang Pulse] You're now the owner of ${many ? `${p.projects.length} projects` : p.projects[0]}`;
+  const link = config.appBaseUrl ? `${config.appBaseUrl}/projects` : null;
+  const intro = `${esc(p.byName)} removed <strong>${esc(p.formerOwnerName)}</strong>'s account and transferred their project ownership to you. You're now responsible for the ${many ? "projects" : "project"} below — its monitors, members and alerts.`;
+  const body = details([[many ? "Projects" : "Project", p.projects.join(", ")], ["New owner", p.ownerName]]) + button("Open projects", link);
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "info", eyebrow: "Ownership transferred", title: many ? "You're now a project owner" : `You now own ${p.projects[0]}`, intro, bodyHtml: body }),
+    text: textBlock(subject, [["Projects", p.projects.join(", ")], ["Transferred by", p.byName], ["Open", link]]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // New user invite (admin created the account)
 // ─────────────────────────────────────────────────────────────────────────────
 export function userInviteEmail(p: {

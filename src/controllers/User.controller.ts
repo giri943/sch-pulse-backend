@@ -3,6 +3,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { User } from "../models/user.model";
 import { Role } from "../models/role.model";
 import { Monitor } from "../models/monitor.model";
+import { Project } from "../models/project.model";
 import { ProjectMember } from "../models/projectMember.model";
 import { ProjectJoinRequest } from "../models/projectJoinRequest.model";
 import { ApiError } from "../utils/ApiError";
@@ -13,7 +14,7 @@ import { skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
 import { config } from "../config";
 import { logger } from "../config/logger";
-import { sendEmail, userInviteEmail } from "../services/mailer";
+import { sendEmail, userInviteEmail, projectOwnershipEmail } from "../services/mailer";
 import { emailDomainAllowed } from "../utils/emailDomain";
 
 /** Invite (set-password) link validity — longer than a normal reset so people have time. */
@@ -142,6 +143,48 @@ export async function deleteUser(req: Request, res: Response): Promise<void> {
   const targetIsSuperAdmin = (target.role?.permissions ?? []).includes(WILDCARD);
   if (targetIsSuperAdmin && (await countActiveSuperAdmins()) <= 1) {
     throw ApiError.badRequest("Cannot delete the last Super Admin. Assign another Super Admin first.");
+  }
+
+  // Projects this user SOLELY owns would be orphaned by the delete — they must be
+  // transferred to another user first.
+  const ownedIds = (await ProjectMember.find({ userId: target._id, role: "owner" }).select("projectId").lean()).map((m) => m.projectId);
+  const orphaned: typeof ownedIds = [];
+  for (const pid of ownedIds) {
+    if ((await ProjectMember.countDocuments({ projectId: pid, role: "owner" })) <= 1) orphaned.push(pid);
+  }
+
+  if (orphaned.length) {
+    const transferToUserId = req.body?.transferToUserId as string | undefined;
+    if (!transferToUserId) {
+      const projects = await Project.find({ _id: { $in: orphaned } }).select("name").lean();
+      throw new ApiError(
+        409,
+        "This user is the sole owner of one or more projects. Choose someone to take over before deleting.",
+        "OWNERSHIP_TRANSFER_REQUIRED",
+        { projects: projects.map((p) => ({ id: String(p._id), name: p.name })) },
+      );
+    }
+    if (String(transferToUserId) === String(target._id)) throw ApiError.badRequest("Can't transfer ownership to the user being deleted");
+    const newOwner = await User.findById(transferToUserId).select("name email status").lean();
+    if (!newOwner || newOwner.status !== "active") throw ApiError.badRequest("Choose an active user to take over ownership");
+
+    // Make the recipient owner of each orphaned project (adds them if not already a member).
+    await Promise.all(
+      orphaned.map((pid) =>
+        ProjectMember.updateOne({ projectId: pid, userId: transferToUserId }, { $set: { role: "owner", addedBy: req.user!.id } }, { upsert: true }),
+      ),
+    );
+    const projects = await Project.find({ _id: { $in: orphaned } }).select("name").lean();
+    await writeAudit(req, "project.ownership_transfer", { targetType: "user", targetId: req.params.id, metadata: { to: String(transferToUserId), projects: projects.length } });
+    void sendEmail(
+      projectOwnershipEmail({
+        to: [newOwner.email],
+        ownerName: newOwner.name,
+        formerOwnerName: target.name,
+        byName: req.user!.name,
+        projects: projects.map((p) => p.name),
+      }),
+    );
   }
 
   // Clean up the user's references; keep historical createdBy/audit rows intact.

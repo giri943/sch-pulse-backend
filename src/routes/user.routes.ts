@@ -37,10 +37,11 @@ router.patch(
   validate({ params: idParamSchema, body: updateUserSchema }),
   catchAsync(UserController.updateUser),
 );
+const deleteUserSchema = z.object({ transferToUserId: objectId.optional() });
 router.delete(
   "/:id",
   requirePermission(P.USER_DELETE),
-  validate({ params: idParamSchema }),
+  validate({ params: idParamSchema, body: deleteUserSchema }),
   catchAsync(UserController.deleteUser),
 );
 
