@@ -27,7 +27,10 @@ export function createApp(): Application {
     pinoHttp({
       logger,
       genReqId: (req) => (req as Request).id,
-      customSuccessMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
+      // Keep each request to ONE clean line. Dropping the default req/res
+      // serializers also stops logging headers — incl. the Authorization JWT.
+      serializers: { req: () => undefined, res: () => undefined },
+      customSuccessMessage: (req, res, responseTime) => `${req.method} ${req.url} ${res.statusCode} · ${responseTime}ms`,
       customErrorMessage: (req, res, err) => `${req.method} ${req.url} ${res.statusCode} - ${err.message}`,
       customLogLevel: (req, res, err) => {
         if (err || res.statusCode >= 500) return "error";

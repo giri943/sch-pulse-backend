@@ -348,6 +348,48 @@ export function monitorJoinedEmail(p: { to: string[]; monitorName: string; url: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// New user invite (admin created the account)
+// ─────────────────────────────────────────────────────────────────────────────
+export function userInviteEmail(p: {
+  to: string[];
+  name: string;
+  email: string;
+  roleName: string;
+  inviterName: string;
+  setupUrl: string;
+}): EmailMessage {
+  const subject = "[Schbang Pulse] You've been added — set up your account";
+  const intro = `<strong>${esc(p.inviterName)}</strong> created a Schbang Pulse account for you. Pulse is Schbang's uptime &amp; health monitoring for client websites, APIs, SSL certificates and domains. Set your password to get started — or just sign in with your Schbang Google account.`;
+  const body =
+    details([
+      ["Email", p.email],
+      ["Role", p.roleName],
+    ]) +
+    button("Set your password", p.setupUrl) +
+    (config.appBaseUrl
+      ? `<p style="margin:14px 0 0;font-size:13px;color:${MUTED};line-height:1.55">Prefer Google? Sign in at <a href="${esc(config.appBaseUrl)}" style="color:${BRAND}">${esc(config.appBaseUrl)}</a> with your Schbang account — no password needed.</p>`
+      : "");
+  return {
+    to: p.to,
+    subject,
+    html: shell({
+      accent: "info",
+      eyebrow: "Welcome",
+      title: "Welcome to Schbang Pulse",
+      intro,
+      bodyHtml: body,
+      footerNote: 'This invite link expires in 7 days. If it lapses, use "Forgot password" on the sign-in page to get a new one.',
+    }),
+    text: textBlock(subject, [
+      ["Email", p.email],
+      ["Role", p.roleName],
+      ["Invited by", p.inviterName],
+      ["Set your password", p.setupUrl],
+    ]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Password reset
 // ─────────────────────────────────────────────────────────────────────────────
 export function passwordResetEmail(p: { to: string[]; resetUrl: string }): EmailMessage {

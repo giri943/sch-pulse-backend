@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { randomBytes, createHash } from "node:crypto";
 import { User } from "../models/user.model";
 import { Role } from "../models/role.model";
 import { ApiError } from "../utils/ApiError";
@@ -7,6 +8,12 @@ import { WILDCARD } from "../utils/permissions";
 import { paginate, pageParams } from "../utils/response";
 import { skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
+import { config } from "../config";
+import { logger } from "../config/logger";
+import { sendEmail, userInviteEmail } from "../services/mailer";
+
+/** Invite (set-password) link validity — longer than a normal reset so people have time. */
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function publicUser(u: Record<string, unknown>) {
   const role = u.role as { _id?: unknown; name?: string } | undefined;
@@ -50,15 +57,29 @@ export async function searchUsers(req: Request, res: Response): Promise<void> {
 export async function createUser(req: Request, res: Response): Promise<void> {
   const { name, email, password, roleId } = req.body;
   if (await User.findOne({ email })) throw ApiError.conflict("Email already in use");
-  if (!(await Role.findById(roleId))) throw ApiError.badRequest("Invalid role");
+  const role = await Role.findById(roleId).select("name").lean();
+  if (!role) throw ApiError.badRequest("Invalid role");
 
   const user = await User.create({
     name,
     email,
     role: roleId,
     authProvider: "local",
-    passwordHash: await hashPassword(password),
+    // Password is optional — when omitted the user sets it via the invite link below.
+    ...(password ? { passwordHash: await hashPassword(password) } : {}),
   });
+
+  // Invite: a 7-day set-password token + a welcome email with the link.
+  const rawToken = randomBytes(32).toString("hex");
+  user.set("resetPasswordToken", createHash("sha256").update(rawToken).digest("hex"));
+  user.set("resetPasswordExpires", new Date(Date.now() + INVITE_TTL_MS));
+  await user.save();
+  const setupUrl = `${config.appBaseUrl}/reset-password?token=${rawToken}`;
+  if (!config.isProd) logger.info(`[dev] invite link for ${email}: ${setupUrl}`);
+  void sendEmail(
+    userInviteEmail({ to: [email], name, email, roleName: role.name, inviterName: req.user!.name, setupUrl }),
+  );
+
   await writeAudit(req, "user.create", { targetType: "user", targetId: user.id });
   const populated = await User.findById(user._id).populate("role", "name").lean();
   res.status(201).json(publicUser(populated!));
