@@ -37,5 +37,11 @@ router.patch(
   validate({ params: idParamSchema, body: updateUserSchema }),
   catchAsync(UserController.updateUser),
 );
+router.delete(
+  "/:id",
+  requirePermission(P.USER_DELETE),
+  validate({ params: idParamSchema }),
+  catchAsync(UserController.deleteUser),
+);
 
 export default router;
