@@ -185,6 +185,78 @@ export function incidentResolvedEmail(p: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Monitor degraded (a check failed; rechecking shortly)
+// ─────────────────────────────────────────────────────────────────────────────
+export function monitorDegradedEmail(p: {
+  to: string[];
+  monitorName: string;
+  url: string;
+  error: string;
+  statusCode?: number;
+  timestamp: string;
+  monitorId?: string;
+  project?: string;
+}): EmailMessage {
+  const subject = `[Schbang Pulse] ${p.monitorName} is degraded`;
+  const link = monitorLink(p.monitorId);
+  const intro = `A check for <strong>${esc(p.monitorName)}</strong> just failed. We're re-checking in ~2 minutes to confirm whether it's a brief blip or a real outage — you'll get a follow-up either way.`;
+  const body =
+    details([
+      ["Project", p.project],
+      ["URL", p.url],
+      ["Error", p.error],
+      ["Response code", p.statusCode != null ? String(p.statusCode) : "—"],
+      ["First seen", fmtWhen(p.timestamp)],
+    ]) + button("View monitor", link);
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "warn", eyebrow: "Degraded", title: `${p.monitorName} is degraded`, intro, bodyHtml: body, footerNote: footerFor(p.monitorName) }),
+    text: textBlock(subject, [
+      ["Project", p.project],
+      ["URL", p.url],
+      ["Error", p.error],
+      ["Response code", p.statusCode != null ? String(p.statusCode) : "—"],
+      ["First seen", fmtWhen(p.timestamp)],
+      ["View", link],
+    ]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Monitor recovered after a degraded blip (no incident / no downtime)
+// ─────────────────────────────────────────────────────────────────────────────
+export function monitorRecoveredEmail(p: {
+  to: string[];
+  monitorName: string;
+  url: string;
+  recoveredAt: string;
+  monitorId?: string;
+  project?: string;
+}): EmailMessage {
+  const subject = `[Schbang Pulse] ${p.monitorName} recovered`;
+  const link = monitorLink(p.monitorId);
+  const intro = `<strong>${esc(p.monitorName)}</strong> is responding normally again after a brief degraded check. No downtime was recorded.`;
+  const body =
+    details([
+      ["Project", p.project],
+      ["URL", p.url],
+      ["Recovered at", fmtWhen(p.recoveredAt)],
+    ]) + button("View monitor", link);
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "up", eyebrow: "Recovered", title: `${p.monitorName} recovered`, intro, bodyHtml: body, footerNote: footerFor(p.monitorName) }),
+    text: textBlock(subject, [
+      ["Project", p.project],
+      ["URL", p.url],
+      ["Recovered at", fmtWhen(p.recoveredAt)],
+      ["View", link],
+    ]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SSL expiry warning
 // ─────────────────────────────────────────────────────────────────────────────
 export function sslWarningEmail(p: {
@@ -344,6 +416,29 @@ export function monitorJoinedEmail(p: { to: string[]; monitorName: string; url: 
     subject,
     html: shell({ accent: "info", eyebrow: "Monitor · Member", title: "New member joined", intro, bodyHtml: body }),
     text: textBlock(subject, [["Monitor", p.monitorName], ["URL", p.url], ["Joined by", p.joinerName], ["View", link]]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project ownership transferred (e.g. previous owner's account was deleted)
+// ─────────────────────────────────────────────────────────────────────────────
+export function projectOwnershipEmail(p: {
+  to: string[];
+  ownerName: string;
+  formerOwnerName: string;
+  byName: string;
+  projects: string[];
+}): EmailMessage {
+  const many = p.projects.length > 1;
+  const subject = `[Schbang Pulse] You're now the owner of ${many ? `${p.projects.length} projects` : p.projects[0]}`;
+  const link = config.appBaseUrl ? `${config.appBaseUrl}/projects` : null;
+  const intro = `${esc(p.byName)} removed <strong>${esc(p.formerOwnerName)}</strong>'s account and transferred their project ownership to you. You're now responsible for the ${many ? "projects" : "project"} below — its monitors, members and alerts.`;
+  const body = details([[many ? "Projects" : "Project", p.projects.join(", ")], ["New owner", p.ownerName]]) + button("Open projects", link);
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "info", eyebrow: "Ownership transferred", title: many ? "You're now a project owner" : `You now own ${p.projects[0]}`, intro, bodyHtml: body }),
+    text: textBlock(subject, [["Projects", p.projects.join(", ")], ["Transferred by", p.byName], ["Open", link]]),
   };
 }
 

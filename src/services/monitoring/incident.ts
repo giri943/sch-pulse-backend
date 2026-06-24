@@ -2,6 +2,7 @@ import { Check } from "../../models/check.model";
 import { Incident } from "../../models/incident.model";
 import { Monitor } from "../../models/monitor.model";
 import { User } from "../../models/user.model";
+import { ProjectMember } from "../../models/projectMember.model";
 import { FAILURE_THRESHOLD, SSL_WARN_DAYS } from "../../utils/constants";
 import { logger } from "../../config/logger";
 import type { CheckResult, MonitorWithId } from "./types";
@@ -13,11 +14,28 @@ import {
   formatDuration,
   incidentOpenedEmail,
   incidentResolvedEmail,
+  monitorDegradedEmail,
+  monitorRecoveredEmail,
   sendEmail,
   sslWarningEmail,
 } from "../mailer";
 
-/** Alert recipients = tagged members' emails + any extra free-text emails. */
+/** Recheck a degraded monitor sooner than its interval so we escalate/clear fast. */
+const DEGRADED_RECHECK_MS = 2 * 60 * 1000;
+
+/** A project's owners — always alerted (email) + @mentioned (Gchat) for its monitors. */
+async function projectOwnerTargets(projectId: unknown): Promise<{ emails: string[]; mentions: string[] }> {
+  if (!projectId) return { emails: [], mentions: [] };
+  const owners = await ProjectMember.find({ projectId, role: "owner" }).select("userId").lean();
+  if (!owners.length) return { emails: [], mentions: [] };
+  const users = await User.find({ _id: { $in: owners.map((o) => o.userId) } }).select("email googleId").lean();
+  return {
+    emails: users.map((u) => u.email).filter(Boolean),
+    mentions: users.filter((u) => u.googleId).map((u) => `<users/${u.googleId}>`),
+  };
+}
+
+/** Alert recipients = project owners + tagged members' emails + extra free-text emails. */
 async function alertRecipients(monitor: MonitorWithId): Promise<string[]> {
   const memberIds = (monitor.members as unknown[] | undefined) ?? [];
   let memberEmails: string[] = [];
@@ -26,21 +44,26 @@ async function alertRecipients(monitor: MonitorWithId): Promise<string[]> {
     memberEmails = users.map((u) => u.email);
   }
   const extras = (monitor.extraAlertEmails as string[] | undefined) ?? [];
-  return [...new Set([...memberEmails, ...extras])];
+  const owners = await projectOwnerTargets(monitor.projectId);
+  return [...new Set([...owners.emails, ...memberEmails, ...extras])];
 }
 
 /**
- * Google Chat @mentions for tagged members who signed in with Google. Chat
- * mentions need the user's Google ID (we store it as `googleId`); email-only
- * users can't be mentioned. Returns e.g. "<users/123> <users/456>".
+ * Google Chat @mentions for the project owner(s) + tagged members who signed in
+ * with Google. Mentions need the user's Google ID; email-only users can't be
+ * mentioned. Returns e.g. "<users/123> <users/456>".
  */
 async function memberMentions(monitor: MonitorWithId): Promise<string> {
   const memberIds = (monitor.members as unknown[] | undefined) ?? [];
-  if (!memberIds.length) return "";
-  const users = await User.find({ _id: { $in: memberIds }, googleId: { $ne: null } })
-    .select("googleId")
-    .lean();
-  return users.map((u) => `<users/${u.googleId}>`).join(" ");
+  let memberMentionList: string[] = [];
+  if (memberIds.length) {
+    const users = await User.find({ _id: { $in: memberIds }, googleId: { $ne: null } })
+      .select("googleId")
+      .lean();
+    memberMentionList = users.map((u) => `<users/${u.googleId}>`);
+  }
+  const owners = await projectOwnerTargets(monitor.projectId);
+  return [...new Set([...owners.mentions, ...memberMentionList])].join(" ");
 }
 
 /**
@@ -82,21 +105,95 @@ function wafPatch(result: CheckResult, now: Date): Record<string, unknown> {
   return patch;
 }
 
+/** Alert that a monitor just degraded (one failed check; rechecking shortly). */
+async function sendDegradedAlert(monitor: MonitorWithId, result: CheckResult, now: Date): Promise<void> {
+  const project = await projectNameOf(monitor.projectId);
+  const monitorId = String(monitor._id);
+  await sendEmail(
+    monitorDegradedEmail({
+      to: await alertRecipients(monitor),
+      monitorName: monitor.name,
+      url: monitor.url,
+      error: result.error ?? "Check failed",
+      statusCode: result.statusCode,
+      timestamp: now.toISOString(),
+      monitorId,
+      project,
+    }),
+  );
+  await notifyChannels(
+    monitor.channels as unknown[] | undefined,
+    pulseChat({
+      status: "warn",
+      title: `${monitor.name} is degraded`,
+      subtitle: project,
+      mentions: await memberMentions(monitor),
+      rows: [
+        ["URL", monitor.url],
+        ["Error", result.error ?? "Check failed"],
+        ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
+        ["Detected", now.toLocaleString("en-GB")],
+      ],
+      button: { text: "View monitor", url: chatMonitorLink(monitorId) },
+    }),
+  );
+  logger.warn({ monitorId }, "Degraded alert sent");
+}
+
+/** Alert that a degraded monitor recovered without ever going down. */
+async function sendDegradedRecoveredAlert(monitor: MonitorWithId, result: CheckResult, now: Date): Promise<void> {
+  const project = await projectNameOf(monitor.projectId);
+  const monitorId = String(monitor._id);
+  await sendEmail(
+    monitorRecoveredEmail({
+      to: await alertRecipients(monitor),
+      monitorName: monitor.name,
+      url: monitor.url,
+      recoveredAt: now.toISOString(),
+      monitorId,
+      project,
+    }),
+  );
+  await notifyChannels(
+    monitor.channels as unknown[] | undefined,
+    pulseChat({
+      status: "up",
+      title: `${monitor.name} recovered`,
+      subtitle: project,
+      mentions: await memberMentions(monitor),
+      rows: [
+        ["URL", monitor.url],
+        ["Status", "Back to normal after a degraded check"],
+      ],
+      button: { text: "View monitor", url: chatMonitorLink(monitorId) },
+    }),
+  );
+  logger.info({ monitorId }, "Degraded-recovery alert sent");
+}
+
 async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: Date): Promise<void> {
   const failures = (monitor.consecutiveFailures ?? 0) + 1;
-  const willOpen = failures >= FAILURE_THRESHOLD && !monitor.currentIncidentId;
+  const isDown = failures >= FAILURE_THRESHOLD;
+  const willOpen = isDown && !monitor.currentIncidentId;
 
-  await Monitor.updateOne(
-    { _id: monitor._id },
-    {
-      consecutiveFailures: failures,
-      status: failures >= FAILURE_THRESHOLD ? "down" : "degraded",
-      lastCheckedAt: now,
-      lastResponseTimeMs: result.responseTimeMs,
-      ...wafPatch(result, now),
-    },
-  );
-  if (!willOpen) return;
+  const update: Record<string, unknown> = {
+    consecutiveFailures: failures,
+    status: isDown ? "down" : "degraded",
+    lastCheckedAt: now,
+    lastResponseTimeMs: result.responseTimeMs,
+    ...wafPatch(result, now),
+  };
+  // Item 6: while degraded, recheck in 2 min (overriding the interval) so we
+  // escalate to "down" — or clear — fast.
+  if (!isDown) update.nextRunAt = new Date(now.getTime() + DEGRADED_RECHECK_MS);
+  await Monitor.updateOne({ _id: monitor._id }, update);
+
+  // Still degraded (not yet down): alert once, on the transition into degraded.
+  if (!isDown) {
+    if (failures === 1) await sendDegradedAlert(monitor, result, now);
+    return;
+  }
+  if (!willOpen) return; // already down — incident already open, don't re-alert
 
   const recommendations = await getRecommendations({
     statusCode: result.statusCode,
@@ -155,6 +252,7 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
 
 async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: Date): Promise<void> {
   const wasDown = !!monitor.currentIncidentId;
+  const wasDegraded = !wasDown && (monitor.consecutiveFailures ?? 0) > 0;
 
   await Monitor.updateOne(
     { _id: monitor._id },
@@ -167,7 +265,11 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
       ...wafPatch(result, now),
     },
   );
-  if (!wasDown) return;
+  // Recovered from a degraded blip without ever going down → one "recovered" alert.
+  if (!wasDown) {
+    if (wasDegraded) await sendDegradedRecoveredAlert(monitor, result, now);
+    return;
+  }
 
   const incident = await Incident.findOneAndUpdate(
     { _id: monitor.currentIncidentId, status: "open" },
