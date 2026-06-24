@@ -4,6 +4,7 @@ import { OAuth2Client } from "google-auth-library";
 import { User } from "../models/user.model";
 import { Role, MEMBER_ROLE, SUPER_ADMIN_ROLE } from "../models/role.model";
 import { isBootstrapSuperAdmin } from "../utils/superAdmins";
+import { emailDomainAllowed } from "../utils/emailDomain";
 import { ApiError } from "../utils/ApiError";
 import { config } from "../config";
 import { logger } from "../config/logger";
@@ -56,6 +57,9 @@ function sendSession(
 
 export async function login(req: Request, res: Response): Promise<void> {
   const { email, password } = req.body;
+  // Org-only app — block any off-domain account (defence even if one slipped in).
+  if (!emailDomainAllowed(email))
+    throw ApiError.unauthorized(`Only ${config.google.allowedDomain} accounts can sign in`);
   const user = await User.findOne({ email })
     .select("+passwordHash +tokenVersion")
     .populate<{ role: PopulatedRole }>("role", "name permissions");

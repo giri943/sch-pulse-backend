@@ -2,6 +2,9 @@ import type { Request, Response } from "express";
 import { randomBytes, createHash } from "node:crypto";
 import { User } from "../models/user.model";
 import { Role } from "../models/role.model";
+import { Monitor } from "../models/monitor.model";
+import { ProjectMember } from "../models/projectMember.model";
+import { ProjectJoinRequest } from "../models/projectJoinRequest.model";
 import { ApiError } from "../utils/ApiError";
 import { hashPassword } from "../utils/password";
 import { WILDCARD } from "../utils/permissions";
@@ -11,6 +14,7 @@ import { writeAudit } from "../utils/audit";
 import { config } from "../config";
 import { logger } from "../config/logger";
 import { sendEmail, userInviteEmail } from "../services/mailer";
+import { emailDomainAllowed } from "../utils/emailDomain";
 
 /** Invite (set-password) link validity — longer than a normal reset so people have time. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -56,6 +60,8 @@ export async function searchUsers(req: Request, res: Response): Promise<void> {
 
 export async function createUser(req: Request, res: Response): Promise<void> {
   const { name, email, password, roleId } = req.body;
+  if (!emailDomainAllowed(email))
+    throw ApiError.badRequest(`Only ${config.google.allowedDomain} email addresses can be added`);
   if (await User.findOne({ email })) throw ApiError.conflict("Email already in use");
   const role = await Role.findById(roleId).select("name").lean();
   if (!role) throw ApiError.badRequest("Invalid role");
@@ -124,6 +130,29 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
   if (!user) throw ApiError.notFound("User not found");
   await writeAudit(req, "user.update", { targetType: "user", targetId: req.params.id });
   res.json(publicUser(user));
+}
+
+export async function deleteUser(req: Request, res: Response): Promise<void> {
+  const target = await User.findById(req.params.id).populate<{ role: { permissions?: string[] } }>("role", "permissions");
+  if (!target) throw ApiError.notFound("User not found");
+  if (String(target._id) === req.user!.id)
+    throw ApiError.badRequest("You can't delete your own account. Ask another administrator.");
+
+  // Last-Super-Admin protection: don't delete the only remaining admin.
+  const targetIsSuperAdmin = (target.role?.permissions ?? []).includes(WILDCARD);
+  if (targetIsSuperAdmin && (await countActiveSuperAdmins()) <= 1) {
+    throw ApiError.badRequest("Cannot delete the last Super Admin. Assign another Super Admin first.");
+  }
+
+  // Clean up the user's references; keep historical createdBy/audit rows intact.
+  await Promise.all([
+    ProjectMember.deleteMany({ userId: target._id }),
+    ProjectJoinRequest.deleteMany({ userId: target._id }),
+    Monitor.updateMany({ members: target._id }, { $pull: { members: target._id } }),
+  ]);
+  await target.deleteOne();
+  await writeAudit(req, "user.delete", { targetType: "user", targetId: req.params.id, metadata: { email: target.email } });
+  res.status(204).send();
 }
 
 /** Count active users whose role carries the wildcard (Super Admin) permission. */

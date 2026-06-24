@@ -23,6 +23,7 @@ export const PERMISSIONS = {
   USER_CREATE: "user:create",
   USER_UPDATE: "user:update",
   USER_DISABLE: "user:disable",
+  USER_DELETE: "user:delete",
 
   ROLE_READ: "role:read",
   ROLE_CREATE: "role:create",
@@ -77,6 +78,7 @@ export const PERMISSION_CATALOG: { resource: string; items: { key: Permission; l
       { key: PERMISSIONS.USER_CREATE, label: "Create users" },
       { key: PERMISSIONS.USER_UPDATE, label: "Update users (role/status)" },
       { key: PERMISSIONS.USER_DISABLE, label: "Disable users" },
+      { key: PERMISSIONS.USER_DELETE, label: "Delete users" },
     ],
   },
   {
