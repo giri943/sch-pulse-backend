@@ -133,6 +133,26 @@ export async function domainExpiring(req: Request, res: Response): Promise<void>
   );
 }
 
+/** Monitors whose monitoring PERIOD (expiresAt) ends within ~2 weeks. */
+export async function expiringMonitors(req: Request, res: Response): Promise<void> {
+  const { monitorFilter } = await scope(req);
+  const horizon = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+  const monitors = await Monitor.find({ ...monitorFilter, softDeletedAt: null, expiresAt: { $ne: null, $lte: horizon } })
+    .populate("projectId", "name")
+    .sort({ expiresAt: 1 })
+    .lean();
+  res.json(
+    monitors.map((m) => ({
+      monitorId: String(m._id),
+      name: m.name,
+      url: m.url,
+      project: projectName(m.projectId),
+      expiresAt: m.expiresAt,
+      daysRemaining: m.expiresAt ? Math.ceil((new Date(m.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)) : null,
+    })),
+  );
+}
+
 export async function statusBoard(req: Request, res: Response): Promise<void> {
   const { monitorFilter } = await scope(req);
   const monitors = await Monitor.find(monitorFilter)
