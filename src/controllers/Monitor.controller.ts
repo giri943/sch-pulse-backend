@@ -20,6 +20,7 @@ import {
 } from "../utils/access";
 import { normalizeUrl } from "../utils/url";
 import { sparklines } from "../utils/sparkline";
+import { monitorChatMentions } from "../utils/mentions";
 import type { UptimeRange } from "../utils/constants";
 
 const RANGE_MS: Record<UptimeRange, number> = {
@@ -323,6 +324,7 @@ export async function testNotification(req: Request, res: Response): Promise<voi
   // Send chat and email independently so one failing transport (e.g. SMTP
   // blocked on the host) doesn't prevent the other or hang the request.
   const testMonitorId = String(monitor._id);
+  const mentions = await monitorChatMentions(monitor);
   const [emailResult, channelCount] = await Promise.all([
     to.length
       ? sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url, monitorId: testMonitorId }))
@@ -333,6 +335,7 @@ export async function testNotification(req: Request, res: Response): Promise<voi
           pulseChat({
             status: "info",
             title: `Test alert — ${monitor.name}`,
+            mentions,
             rows: [
               ["Monitor", monitor.name],
               ["URL", monitor.url],

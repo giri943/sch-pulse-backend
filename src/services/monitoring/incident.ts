@@ -10,6 +10,7 @@ import { recordStat } from "./stats";
 import { getRecommendations } from "../recommendations";
 import { notifyChannels, pulseChat, chatMonitorLink } from "../channels";
 import { projectNameOf } from "../../utils/projectName";
+import { monitorChatMentions } from "../../utils/mentions";
 import {
   formatDuration,
   incidentOpenedEmail,
@@ -48,22 +49,9 @@ async function alertRecipients(monitor: MonitorWithId): Promise<string[]> {
   return [...new Set([...owners.emails, ...memberEmails, ...extras])];
 }
 
-/**
- * Google Chat @mentions for the project owner(s) + tagged members who signed in
- * with Google. Mentions need the user's Google ID; email-only users can't be
- * mentioned. Returns e.g. "<users/123> <users/456>".
- */
+/** Google Chat @mentions for the monitor's owner(s) + tagged members. */
 async function memberMentions(monitor: MonitorWithId): Promise<string> {
-  const memberIds = (monitor.members as unknown[] | undefined) ?? [];
-  let memberMentionList: string[] = [];
-  if (memberIds.length) {
-    const users = await User.find({ _id: { $in: memberIds }, googleId: { $ne: null } })
-      .select("googleId")
-      .lean();
-    memberMentionList = users.map((u) => `<users/${u.googleId}>`);
-  }
-  const owners = await projectOwnerTargets(monitor.projectId);
-  return [...new Set([...owners.mentions, ...memberMentionList])].join(" ");
+  return monitorChatMentions(monitor);
 }
 
 /**
