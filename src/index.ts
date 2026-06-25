@@ -16,6 +16,7 @@ import { startLifecycle } from "./services/monitoring/lifecycle";
 import { freePort } from "./utils/freePort";
 import { ensureSystemRoles, ensureSuperAdmins } from "./utils/systemRoles";
 import { ensureDefaultProject } from "./utils/ensureDefaultProject";
+import { syncAllIndexes } from "./utils/syncIndexes";
 
 async function bootstrap(): Promise<void> {
   // In dev, a hot-reload can leave the previous process holding the port (and
@@ -23,6 +24,9 @@ async function bootstrap(): Promise<void> {
   if (!config.isProd) await freePort(config.port);
 
   await connectDatabase();
+  // Prod runs with autoIndex off, so build schema indexes (TTLs, unique keys,
+  // query indexes) explicitly on boot. Idempotent — a no-op when nothing changed.
+  await syncAllIndexes();
   await ensureSystemRoles();
   await ensureSuperAdmins();
   await ensureDefaultProject();
