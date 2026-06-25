@@ -288,8 +288,12 @@ async function setEnabled(req: Request, res: Response, enabled: boolean, action:
   if (!existing) throw ApiError.notFound("Monitor not found");
   await assertCanWriteMonitor(req.user!, existing, "update");
 
+  // Resume: mark operational and recheck immediately (nextRunAt=now) — the next
+  // tick corrects it to down within ~one cycle if it's actually failing. This
+  // lets a resumed monitor land in the "Operational" view at once instead of
+  // sitting in "unknown" until the first recheck.
   const update = enabled
-    ? { enabled: true, status: "unknown", nextRunAt: new Date() }
+    ? { enabled: true, status: "operational", nextRunAt: new Date() }
     : { enabled: false, status: "paused" };
   const monitor = await Monitor.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
   await writeAudit(req, action, { targetType: "monitor", targetId: req.params.id });
