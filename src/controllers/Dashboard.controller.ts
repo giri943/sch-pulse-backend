@@ -53,11 +53,24 @@ export async function globalStats(req: Request, res: Response): Promise<void> {
 }
 
 export async function uptimeOverview(req: Request, res: Response): Promise<void> {
-  const { byMonitorId } = await scope(req);
   const range = ((req.query.range as string) || "24h") as UptimeRange;
   const from = new Date(Date.now() - (RANGE_MS[range] ?? RANGE_MS["24h"]));
+
+  // Scope to the caller's accessible monitors, optionally narrowed to one project.
+  const ids = await accessibleMonitorIds(req.user!); // null = full access
+  let monitorMatch: Record<string, unknown> = ids === null ? {} : { monitorId: { $in: ids } };
+  const projectId = String((req.query.projectId as string) ?? "");
+  if (projectId && Types.ObjectId.isValid(projectId)) {
+    const projMonitorIds = await Monitor.find({
+      projectId,
+      softDeletedAt: null,
+      ...(ids ? { _id: { $in: ids } } : {}),
+    }).distinct("_id");
+    monitorMatch = { monitorId: { $in: projMonitorIds } };
+  }
+
   const rows = await UptimeStat.aggregate([
-    { $match: { ...byMonitorId, bucketStart: { $gte: from } } },
+    { $match: { ...monitorMatch, bucketStart: { $gte: from } } },
     {
       $group: {
         _id: "$bucketStart",
