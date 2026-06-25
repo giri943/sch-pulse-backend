@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import * as MonitorController from "../controllers/Monitor.controller";
 import { authenticate, requirePermission } from "../middlewares/auth";
 import { validate } from "../middlewares/validate";
@@ -6,6 +7,8 @@ import { catchAsync } from "../utils/catchAsync";
 import { idParamSchema, paginationSchema } from "../validations/common.validation";
 import { createMonitorSchema, updateMonitorSchema } from "../validations/monitor.validation";
 import { PERMISSIONS as P } from "../utils/permissions";
+
+const restoreSchema = z.object({ expiresAt: z.string().datetime().nullable().optional() });
 
 const router = Router();
 router.use(authenticate);
@@ -34,7 +37,7 @@ router.delete("/:id", canDelete, validate({ params: idParamSchema }), catchAsync
 router.post("/:id/pause", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.pauseMonitor));
 router.post("/:id/resume", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.resumeMonitor));
 router.post("/:id/run", canRun, validate({ params: idParamSchema }), catchAsync(MonitorController.runMonitor));
-router.post("/:id/restore", canUpdate, validate({ params: idParamSchema }), catchAsync(MonitorController.restoreMonitor));
+router.post("/:id/restore", canUpdate, validate({ params: idParamSchema, body: restoreSchema }), catchAsync(MonitorController.restoreMonitor));
 router.post(
   "/:id/join",
   requirePermission(P.MONITOR_CREATE),

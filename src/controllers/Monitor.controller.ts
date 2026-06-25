@@ -274,12 +274,14 @@ export async function restoreMonitor(req: Request, res: Response): Promise<void>
   if (!existing) throw ApiError.notFound("Monitor not found");
   await assertCanWriteMonitor(req.user!, existing, "update");
 
+  // Restore with a fresh monitoring period if one was chosen (else indefinite).
+  const expiresAt = req.body?.expiresAt ? new Date(req.body.expiresAt) : null;
   const monitor = await Monitor.findByIdAndUpdate(
     req.params.id,
-    { softDeletedAt: null, enabled: true, status: "unknown", nextRunAt: new Date(), expiresAt: null, expiryRemindersSent: [] },
+    { softDeletedAt: null, enabled: true, status: "unknown", nextRunAt: new Date(), expiresAt, expiryRemindersSent: [] },
     { new: true },
   ).lean();
-  await writeAudit(req, "monitor.restore", { targetType: "monitor", targetId: req.params.id });
+  await writeAudit(req, "monitor.restore", { targetType: "monitor", targetId: req.params.id, metadata: { expiresAt } });
   res.json(monitor);
 }
 
@@ -288,8 +290,12 @@ async function setEnabled(req: Request, res: Response, enabled: boolean, action:
   if (!existing) throw ApiError.notFound("Monitor not found");
   await assertCanWriteMonitor(req.user!, existing, "update");
 
+  // Resume: mark operational and recheck immediately (nextRunAt=now) — the next
+  // tick corrects it to down within ~one cycle if it's actually failing. This
+  // lets a resumed monitor land in the "Operational" view at once instead of
+  // sitting in "unknown" until the first recheck.
   const update = enabled
-    ? { enabled: true, status: "unknown", nextRunAt: new Date() }
+    ? { enabled: true, status: "operational", nextRunAt: new Date() }
     : { enabled: false, status: "paused" };
   const monitor = await Monitor.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
   await writeAudit(req, action, { targetType: "monitor", targetId: req.params.id });

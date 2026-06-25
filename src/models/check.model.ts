@@ -17,8 +17,12 @@ const checkSchema = new Schema(
 );
 
 checkSchema.index({ monitorId: 1, checkedAt: -1 });
-// TTL: raw checks expire after 90 days to bound the hot collection.
-checkSchema.index({ checkedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 });
+// TTL: raw checks expire after 14 days. Only the recent-checks list (~last 20)
+// and the 24h latency stats read this collection; long-term uptime/graphs come
+// from the hourly UptimeStat rollup, so a short retention bounds storage cheaply.
+// NOTE: changing this value does NOT update the TTL on an existing collection —
+// run scripts/migrate-checks-ttl.ts once against the live DB.
+checkSchema.index({ checkedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 14 });
 
 export type CheckDoc = InferSchemaType<typeof checkSchema>;
 export const Check: Model<CheckDoc> = model<CheckDoc>("Check", checkSchema);

@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { Types } from "mongoose";
 import { Incident } from "../models/incident.model";
 import { Monitor } from "../models/monitor.model";
 import { ApiError } from "../utils/ApiError";
@@ -21,11 +22,20 @@ export async function listIncidents(req: Request, res: Response): Promise<void> 
   const q = req.query as Record<string, string>;
   const filter: Record<string, unknown> = {};
   if (q.status) filter.status = q.status;
-  if (q.monitorId) filter.monitorId = q.monitorId;
 
-  // Scope to the monitors the user can see.
-  const ids = await accessibleMonitorIds(req.user!);
-  if (ids !== null) filter.monitorId = { $in: ids };
+  // Scope to the monitors the user can see, optionally narrowed to one project.
+  const ids = await accessibleMonitorIds(req.user!); // null = full access
+  let allowedIds: string[] | null = ids === null ? null : ids.map(String);
+  if (q.projectId && Types.ObjectId.isValid(q.projectId)) {
+    const projIds = (await Monitor.find({ projectId: q.projectId }).distinct("_id")).map(String);
+    allowedIds = allowedIds === null ? projIds : projIds.filter((p) => allowedIds!.includes(p));
+  }
+  if (q.monitorId) {
+    // Explicit single monitor — honoured only if the caller may see it.
+    filter.monitorId = allowedIds && !allowedIds.includes(String(q.monitorId)) ? { $in: [] } : q.monitorId;
+  } else if (allowedIds !== null) {
+    filter.monitorId = { $in: allowedIds };
+  }
 
   const [data, total] = await Promise.all([
     Incident.find(filter)
