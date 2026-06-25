@@ -20,15 +20,32 @@ const TTL_SECONDS = 60 * 60 * 24 * TTL_DAYS;
   const coll = db.collection("checks");
 
   const before = await coll.estimatedDocumentCount();
-  const idx = (await coll.indexes()).find((i) => i.key?.checkedAt === 1 && i.expireAfterSeconds != null);
-  console.log(`checks: ~${before} docs · current TTL: ${idx ? `${idx.expireAfterSeconds}s (${(idx.expireAfterSeconds! / 86400).toFixed(0)}d)` : "none"}`);
+  // Find a single-field { checkedAt: 1 } index, if any.
+  const idx = (await coll.indexes()).find(
+    (i) => i.key && (i.key as Record<string, unknown>).checkedAt === 1 && Object.keys(i.key).length === 1,
+  );
+  console.log(
+    `checks: ~${before} docs · current { checkedAt } TTL: ${
+      idx ? (idx.expireAfterSeconds != null ? `${(idx.expireAfterSeconds / 86400).toFixed(0)}d` : "index exists, no TTL") : "no index"
+    }`,
+  );
 
-  if (idx && idx.expireAfterSeconds === TTL_SECONDS) {
+  if (!idx) {
+    // The index never existed (autoIndex is off in prod) — create it with the TTL.
+    await coll.createIndex({ checkedAt: 1 }, { expireAfterSeconds: TTL_SECONDS });
+    console.log(`✓ Created { checkedAt } TTL index (${TTL_DAYS} days).`);
+  } else if (idx.expireAfterSeconds === TTL_SECONDS) {
     console.log(`✓ TTL already ${TTL_DAYS} days — nothing to do.`);
-  } else {
+  } else if (idx.expireAfterSeconds != null) {
     await db.command({ collMod: "checks", index: { keyPattern: { checkedAt: 1 }, expireAfterSeconds: TTL_SECONDS } });
-    console.log(`✓ TTL set to ${TTL_DAYS} days (${TTL_SECONDS}s). MongoDB will purge older docs on its next TTL sweep (~60s).`);
+    console.log(`✓ Updated TTL to ${TTL_DAYS} days.`);
+  } else {
+    // A non-TTL { checkedAt } index exists — recreate it as a TTL index.
+    await coll.dropIndex(idx.name!);
+    await coll.createIndex({ checkedAt: 1 }, { expireAfterSeconds: TTL_SECONDS });
+    console.log(`✓ Recreated { checkedAt } as a ${TTL_DAYS}-day TTL index.`);
   }
+  console.log("MongoDB purges expired docs on its next TTL sweep (~60s).");
 
   // Confirm and surface roughly how much will expire.
   const cutoff = new Date(Date.now() - TTL_SECONDS * 1000);
