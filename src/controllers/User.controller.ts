@@ -1,12 +1,24 @@
 import type { Request, Response } from "express";
+import { randomBytes, createHash } from "node:crypto";
 import { User } from "../models/user.model";
 import { Role } from "../models/role.model";
+import { Monitor } from "../models/monitor.model";
+import { Project } from "../models/project.model";
+import { ProjectMember } from "../models/projectMember.model";
+import { ProjectJoinRequest } from "../models/projectJoinRequest.model";
 import { ApiError } from "../utils/ApiError";
 import { hashPassword } from "../utils/password";
 import { WILDCARD } from "../utils/permissions";
 import { paginate, pageParams } from "../utils/response";
 import { skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
+import { config } from "../config";
+import { logger } from "../config/logger";
+import { sendEmail, userInviteEmail, projectOwnershipEmail } from "../services/mailer";
+import { emailDomainAllowed } from "../utils/emailDomain";
+
+/** Invite (set-password) link validity — longer than a normal reset so people have time. */
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function publicUser(u: Record<string, unknown>) {
   const role = u.role as { _id?: unknown; name?: string } | undefined;
@@ -49,16 +61,32 @@ export async function searchUsers(req: Request, res: Response): Promise<void> {
 
 export async function createUser(req: Request, res: Response): Promise<void> {
   const { name, email, password, roleId } = req.body;
+  if (!emailDomainAllowed(email))
+    throw ApiError.badRequest(`Only ${config.google.allowedDomain} email addresses can be added`);
   if (await User.findOne({ email })) throw ApiError.conflict("Email already in use");
-  if (!(await Role.findById(roleId))) throw ApiError.badRequest("Invalid role");
+  const role = await Role.findById(roleId).select("name").lean();
+  if (!role) throw ApiError.badRequest("Invalid role");
 
   const user = await User.create({
     name,
     email,
     role: roleId,
     authProvider: "local",
-    passwordHash: await hashPassword(password),
+    // Password is optional — when omitted the user sets it via the invite link below.
+    ...(password ? { passwordHash: await hashPassword(password) } : {}),
   });
+
+  // Invite: a 7-day set-password token + a welcome email with the link.
+  const rawToken = randomBytes(32).toString("hex");
+  user.set("resetPasswordToken", createHash("sha256").update(rawToken).digest("hex"));
+  user.set("resetPasswordExpires", new Date(Date.now() + INVITE_TTL_MS));
+  await user.save();
+  const setupUrl = `${config.appBaseUrl}/reset-password?token=${rawToken}`;
+  if (!config.isProd) logger.info(`[dev] invite link for ${email}: ${setupUrl}`);
+  void sendEmail(
+    userInviteEmail({ to: [email], name, email, roleName: role.name, inviterName: req.user!.name, setupUrl }),
+  );
+
   await writeAudit(req, "user.create", { targetType: "user", targetId: user.id });
   const populated = await User.findById(user._id).populate("role", "name").lean();
   res.status(201).json(publicUser(populated!));
@@ -103,6 +131,71 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
   if (!user) throw ApiError.notFound("User not found");
   await writeAudit(req, "user.update", { targetType: "user", targetId: req.params.id });
   res.json(publicUser(user));
+}
+
+export async function deleteUser(req: Request, res: Response): Promise<void> {
+  const target = await User.findById(req.params.id).populate<{ role: { permissions?: string[] } }>("role", "permissions");
+  if (!target) throw ApiError.notFound("User not found");
+  if (String(target._id) === req.user!.id)
+    throw ApiError.badRequest("You can't delete your own account. Ask another administrator.");
+
+  // Last-Super-Admin protection: don't delete the only remaining admin.
+  const targetIsSuperAdmin = (target.role?.permissions ?? []).includes(WILDCARD);
+  if (targetIsSuperAdmin && (await countActiveSuperAdmins()) <= 1) {
+    throw ApiError.badRequest("Cannot delete the last Super Admin. Assign another Super Admin first.");
+  }
+
+  // Projects this user SOLELY owns would be orphaned by the delete — they must be
+  // transferred to another user first.
+  const ownedIds = (await ProjectMember.find({ userId: target._id, role: "owner" }).select("projectId").lean()).map((m) => m.projectId);
+  const orphaned: typeof ownedIds = [];
+  for (const pid of ownedIds) {
+    if ((await ProjectMember.countDocuments({ projectId: pid, role: "owner" })) <= 1) orphaned.push(pid);
+  }
+
+  if (orphaned.length) {
+    const transferToUserId = req.body?.transferToUserId as string | undefined;
+    if (!transferToUserId) {
+      const projects = await Project.find({ _id: { $in: orphaned } }).select("name").lean();
+      throw new ApiError(
+        409,
+        "This user is the sole owner of one or more projects. Choose someone to take over before deleting.",
+        "OWNERSHIP_TRANSFER_REQUIRED",
+        { projects: projects.map((p) => ({ id: String(p._id), name: p.name })) },
+      );
+    }
+    if (String(transferToUserId) === String(target._id)) throw ApiError.badRequest("Can't transfer ownership to the user being deleted");
+    const newOwner = await User.findById(transferToUserId).select("name email status").lean();
+    if (!newOwner || newOwner.status !== "active") throw ApiError.badRequest("Choose an active user to take over ownership");
+
+    // Make the recipient owner of each orphaned project (adds them if not already a member).
+    await Promise.all(
+      orphaned.map((pid) =>
+        ProjectMember.updateOne({ projectId: pid, userId: transferToUserId }, { $set: { role: "owner", addedBy: req.user!.id } }, { upsert: true }),
+      ),
+    );
+    const projects = await Project.find({ _id: { $in: orphaned } }).select("name").lean();
+    await writeAudit(req, "project.ownership_transfer", { targetType: "user", targetId: req.params.id, metadata: { to: String(transferToUserId), projects: projects.length } });
+    void sendEmail(
+      projectOwnershipEmail({
+        to: [newOwner.email],
+        ownerName: newOwner.name,
+        formerOwnerName: target.name,
+        byName: req.user!.name,
+        projects: projects.map((p) => p.name),
+      }),
+    );
+  }
+
+  // Clean up the user's references; keep historical createdBy/audit rows intact.
+  await Promise.all([
+    ProjectMember.deleteMany({ userId: target._id }),
+    ProjectJoinRequest.deleteMany({ userId: target._id }),
+    Monitor.updateMany({ members: target._id }, { $pull: { members: target._id } }),
+  ]);
+  await target.deleteOne();
+  await writeAudit(req, "user.delete", { targetType: "user", targetId: req.params.id, metadata: { email: target.email } });
+  res.status(204).send();
 }
 
 /** Count active users whose role carries the wildcard (Super Admin) permission. */

@@ -16,6 +16,7 @@ import { startLifecycle } from "./services/monitoring/lifecycle";
 import { freePort } from "./utils/freePort";
 import { ensureSystemRoles, ensureSuperAdmins } from "./utils/systemRoles";
 import { ensureDefaultProject } from "./utils/ensureDefaultProject";
+import { syncAllIndexes } from "./utils/syncIndexes";
 
 async function bootstrap(): Promise<void> {
   // In dev, a hot-reload can leave the previous process holding the port (and
@@ -23,6 +24,9 @@ async function bootstrap(): Promise<void> {
   if (!config.isProd) await freePort(config.port);
 
   await connectDatabase();
+  // Prod runs with autoIndex off, so build schema indexes (TTLs, unique keys,
+  // query indexes) explicitly on boot. Idempotent — a no-op when nothing changed.
+  await syncAllIndexes();
   await ensureSystemRoles();
   await ensureSuperAdmins();
   await ensureDefaultProject();
@@ -67,16 +71,24 @@ async function bootstrap(): Promise<void> {
   server.listen(config.port);
 
   // In-process crons (no AWS): monitoring checks (every ~20s) + lifecycle (hourly).
-  const monitoringTask: ScheduledTask = startMonitoring();
-  const lifecycleTask: ScheduledTask = startLifecycle();
+  // Disable on a secondary/local instance (SCHEDULER_ENABLED=false) so it doesn't
+  // double-check the same sites as production.
+  let monitoringTask: ScheduledTask | null = null;
+  let lifecycleTask: ScheduledTask | null = null;
+  if (config.scheduler.enabled) {
+    monitoringTask = startMonitoring();
+    lifecycleTask = startLifecycle();
+  } else {
+    logger.warn("Scheduler disabled (SCHEDULER_ENABLED=false) — running API-only, no monitoring/lifecycle crons");
+  }
 
   let shuttingDown = false;
   const shutdown = (signal: string) => {
     if (shuttingDown) return; // ignore repeated signals during a restart
     shuttingDown = true;
     logger.info(`${signal} received — shutting down`);
-    monitoringTask.stop();
-    lifecycleTask.stop();
+    monitoringTask?.stop();
+    lifecycleTask?.stop();
     // Immediately drop keep-alive sockets (e.g. the dashboard's polling) so the
     // port is released right away — otherwise tsx watch's new process hits EADDRINUSE.
     server.closeAllConnections?.();
@@ -89,6 +101,13 @@ async function bootstrap(): Promise<void> {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("unhandledRejection", (reason) => logger.error({ reason }, "Unhandled rejection"));
+  // After an uncaught exception the process is in an undefined state — log and
+  // exit so the supervisor (pm2) restarts a clean one rather than serving from
+  // a corrupted process. /readyz makes the restart safe.
+  process.on("uncaughtException", (err) => {
+    logger.fatal({ err }, "Uncaught exception — shutting down");
+    shutdown("uncaughtException");
+  });
 }
 
 bootstrap().catch((err) => {

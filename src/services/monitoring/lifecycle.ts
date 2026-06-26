@@ -8,6 +8,7 @@ import { logger } from "../../config/logger";
 import { sendEmail, monitorExpiringEmail, monitorExpiredEmail, domainExpiringEmail } from "../mailer";
 import { notifyChannels, pulseChat, chatMonitorLink } from "../channels";
 import { projectNameOf } from "../../utils/projectName";
+import { monitorChatMentions } from "../../utils/mentions";
 
 /** Short date like "12 Aug 2026". */
 const shortDate = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -23,6 +24,7 @@ interface LifecycleMonitor {
   _id: unknown;
   name: string;
   url: string;
+  projectId?: unknown;
   members?: unknown[];
   extraAlertEmails?: string[];
   channels?: unknown[];
@@ -42,8 +44,25 @@ async function recipients(m: LifecycleMonitor): Promise<string[]> {
   return [...new Set([...emails, ...(m.extraAlertEmails ?? [])])];
 }
 
+// Re-entrancy guard: the hourly pass can run long (per-monitor RDAP probes), so
+// skip a new pass if the previous one is still running rather than overlapping.
+let lifecycleRunning = false;
+
 /** One lifecycle pass: expiry reminders, soft-delete on expiry, purge old soft-deletes. */
 export async function runLifecycle(): Promise<void> {
+  if (lifecycleRunning) {
+    logger.warn("Lifecycle pass still running — skipping this tick");
+    return;
+  }
+  lifecycleRunning = true;
+  try {
+    await runLifecyclePass();
+  } finally {
+    lifecycleRunning = false;
+  }
+}
+
+async function runLifecyclePass(): Promise<void> {
   const now = new Date();
 
   // 1) Reminders + soft-delete for monitors with a monitoring period.
@@ -62,6 +81,7 @@ export async function runLifecycle(): Promise<void> {
         pulseChat({
           status: "warn",
           title: `Monitoring ended — ${m.name}`,
+          mentions: await monitorChatMentions(m),
           rows: [
             ["URL", m.url],
             ["Note", `Archived now; permanently deleted in ${PURGE_AFTER_DAYS} days unless restored.`],
@@ -81,6 +101,7 @@ export async function runLifecycle(): Promise<void> {
           status: "warn",
           title: `Monitoring ends in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`,
           subtitle: m.name,
+          mentions: await monitorChatMentions(m),
           rows: [
             ["URL", m.url],
             ["Ends on", shortDate(exp)],
@@ -138,6 +159,7 @@ export async function runLifecycle(): Promise<void> {
           status: "down",
           title: `Domain expiring in ${days} day${days === 1 ? "" : "s"}`,
           subtitle: domain,
+          mentions: await monitorChatMentions(m),
           rows: [
             ["Monitor", m.name],
             ["Domain", domain],

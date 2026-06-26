@@ -53,11 +53,24 @@ export async function globalStats(req: Request, res: Response): Promise<void> {
 }
 
 export async function uptimeOverview(req: Request, res: Response): Promise<void> {
-  const { byMonitorId } = await scope(req);
   const range = ((req.query.range as string) || "24h") as UptimeRange;
   const from = new Date(Date.now() - (RANGE_MS[range] ?? RANGE_MS["24h"]));
+
+  // Scope to the caller's accessible monitors, optionally narrowed to one project.
+  const ids = await accessibleMonitorIds(req.user!); // null = full access
+  let monitorMatch: Record<string, unknown> = ids === null ? {} : { monitorId: { $in: ids } };
+  const projectId = String((req.query.projectId as string) ?? "");
+  if (projectId && Types.ObjectId.isValid(projectId)) {
+    const projMonitorIds = await Monitor.find({
+      projectId,
+      softDeletedAt: null,
+      ...(ids ? { _id: { $in: ids } } : {}),
+    }).distinct("_id");
+    monitorMatch = { monitorId: { $in: projMonitorIds } };
+  }
+
   const rows = await UptimeStat.aggregate([
-    { $match: { ...byMonitorId, bucketStart: { $gte: from } } },
+    { $match: { ...monitorMatch, bucketStart: { $gte: from } } },
     {
       $group: {
         _id: "$bucketStart",
@@ -129,6 +142,26 @@ export async function domainExpiring(req: Request, res: Response): Promise<void>
       daysRemaining: m.domainExpiresAt
         ? Math.ceil((new Date(m.domainExpiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000))
         : null,
+    })),
+  );
+}
+
+/** Monitors whose monitoring PERIOD (expiresAt) ends within ~2 weeks. */
+export async function expiringMonitors(req: Request, res: Response): Promise<void> {
+  const { monitorFilter } = await scope(req);
+  const horizon = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+  const monitors = await Monitor.find({ ...monitorFilter, softDeletedAt: null, expiresAt: { $ne: null, $lte: horizon } })
+    .populate("projectId", "name")
+    .sort({ expiresAt: 1 })
+    .lean();
+  res.json(
+    monitors.map((m) => ({
+      monitorId: String(m._id),
+      name: m.name,
+      url: m.url,
+      project: projectName(m.projectId),
+      expiresAt: m.expiresAt,
+      daysRemaining: m.expiresAt ? Math.ceil((new Date(m.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)) : null,
     })),
   );
 }

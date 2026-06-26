@@ -33,7 +33,16 @@ export class ApiError extends Error {
   static conflict(message = "Conflict", details?: unknown) {
     return new ApiError(409, message, "CONFLICT", details);
   }
-  static validation(details: unknown, message = "Validation failed") {
-    return new ApiError(400, message, "VALIDATION_ERROR", details);
+  static validation(details: unknown, message?: string) {
+    // Prefer the first specific field/form error so the UI can show a real message
+    // (e.g. "Password must be at least 8 characters") instead of "Validation failed".
+    return new ApiError(400, message ?? firstZodMessage(details) ?? "Validation failed", "VALIDATION_ERROR", details);
   }
+}
+
+/** Pull the first concrete message out of a Zod `flatten()` payload. */
+function firstZodMessage(details: unknown): string | undefined {
+  const d = details as { fieldErrors?: Record<string, string[]>; formErrors?: string[] } | undefined;
+  const field = d?.fieldErrors && Object.values(d.fieldErrors).flat().find(Boolean);
+  return field || d?.formErrors?.find(Boolean) || undefined;
 }

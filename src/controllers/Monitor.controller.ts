@@ -20,6 +20,7 @@ import {
 } from "../utils/access";
 import { normalizeUrl } from "../utils/url";
 import { sparklines } from "../utils/sparkline";
+import { monitorChatMentions } from "../utils/mentions";
 import type { UptimeRange } from "../utils/constants";
 
 const RANGE_MS: Record<UptimeRange, number> = {
@@ -198,11 +199,13 @@ export async function listMonitors(req: Request, res: Response): Promise<void> {
   const { page, limit } = pageParams(req.query);
   const q = req.query as Record<string, string>;
   const filter: Record<string, unknown> = { ...(await monitorScopeFilter(req.user!)) };
-  if (q.type) filter.type = q.type;
-  if (q.projectId) filter.projectId = q.projectId;
-  if (q.enabled !== undefined) filter.enabled = q.enabled === "true";
+  // Coerce to strings before use: query objects (e.g. ?type[$ne]=x) would
+  // otherwise inject Mongo operators into the filter.
+  if (q.type) filter.type = String(q.type);
+  if (q.projectId) filter.projectId = String(q.projectId);
+  if (q.enabled !== undefined) filter.enabled = String(q.enabled) === "true";
   // Archived (soft-deleted) monitors are hidden unless explicitly requested.
-  filter.softDeletedAt = q.deleted === "true" ? { $ne: null } : null;
+  filter.softDeletedAt = String(q.deleted) === "true" ? { $ne: null } : null;
 
   const [data, total] = await Promise.all([
     Monitor.find(filter)
@@ -273,12 +276,14 @@ export async function restoreMonitor(req: Request, res: Response): Promise<void>
   if (!existing) throw ApiError.notFound("Monitor not found");
   await assertCanWriteMonitor(req.user!, existing, "update");
 
+  // Restore with a fresh monitoring period if one was chosen (else indefinite).
+  const expiresAt = req.body?.expiresAt ? new Date(req.body.expiresAt) : null;
   const monitor = await Monitor.findByIdAndUpdate(
     req.params.id,
-    { softDeletedAt: null, enabled: true, status: "unknown", nextRunAt: new Date(), expiresAt: null, expiryRemindersSent: [] },
+    { softDeletedAt: null, enabled: true, status: "unknown", nextRunAt: new Date(), expiresAt, expiryRemindersSent: [] },
     { new: true },
   ).lean();
-  await writeAudit(req, "monitor.restore", { targetType: "monitor", targetId: req.params.id });
+  await writeAudit(req, "monitor.restore", { targetType: "monitor", targetId: req.params.id, metadata: { expiresAt } });
   res.json(monitor);
 }
 
@@ -287,8 +292,12 @@ async function setEnabled(req: Request, res: Response, enabled: boolean, action:
   if (!existing) throw ApiError.notFound("Monitor not found");
   await assertCanWriteMonitor(req.user!, existing, "update");
 
+  // Resume: mark operational and recheck immediately (nextRunAt=now) — the next
+  // tick corrects it to down within ~one cycle if it's actually failing. This
+  // lets a resumed monitor land in the "Operational" view at once instead of
+  // sitting in "unknown" until the first recheck.
   const update = enabled
-    ? { enabled: true, status: "unknown", nextRunAt: new Date() }
+    ? { enabled: true, status: "operational", nextRunAt: new Date() }
     : { enabled: false, status: "paused" };
   const monitor = await Monitor.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
   await writeAudit(req, action, { targetType: "monitor", targetId: req.params.id });
@@ -323,6 +332,7 @@ export async function testNotification(req: Request, res: Response): Promise<voi
   // Send chat and email independently so one failing transport (e.g. SMTP
   // blocked on the host) doesn't prevent the other or hang the request.
   const testMonitorId = String(monitor._id);
+  const mentions = await monitorChatMentions(monitor);
   const [emailResult, channelCount] = await Promise.all([
     to.length
       ? sendEmail(testNotificationEmail({ to, monitorName: monitor.name, url: monitor.url, monitorId: testMonitorId }))
@@ -333,6 +343,7 @@ export async function testNotification(req: Request, res: Response): Promise<voi
           pulseChat({
             status: "info",
             title: `Test alert — ${monitor.name}`,
+            mentions,
             rows: [
               ["Monitor", monitor.name],
               ["URL", monitor.url],
@@ -424,21 +435,27 @@ export async function monitorSummary(req: Request, res: Response): Promise<void>
   await assertCanReadMonitor(req.user!, monitor);
 
   const down = !!monitor.currentIncidentId;
-  let stateSince: Date | null;
-  if (down) {
-    const open = await Incident.findOne({ monitorId: id, status: "open" }).sort({ startedAt: -1 }).lean();
-    stateSince = open?.startedAt ?? null;
-  } else {
-    const lastResolved = await Incident.findOne({ monitorId: id, status: "resolved" })
-      .sort({ resolvedAt: -1 })
-      .lean();
-    stateSince = lastResolved?.resolvedAt ?? (monitor as { createdAt?: Date }).createdAt ?? null;
-  }
 
-  const buckets = await UptimeStat.find({
-    monitorId: id,
-    bucketStart: { $gte: new Date(now - RANGE_MS["30d"]) },
-  }).lean();
+  // These four reads are independent — run them in one round-trip batch instead
+  // of sequentially (this is a per-detail-page-load hot path).
+  const statePromise = down
+    ? Incident.findOne({ monitorId: id, status: "open" }).sort({ startedAt: -1 }).lean()
+    : Incident.findOne({ monitorId: id, status: "resolved" }).sort({ resolvedAt: -1 }).lean();
+  const [stateDoc, buckets, respAgg, totalIncidents] = await Promise.all([
+    statePromise,
+    UptimeStat.find({ monitorId: id, bucketStart: { $gte: new Date(now - RANGE_MS["30d"]) } })
+      .select("bucketStart ups count sumResponseMs")
+      .lean(),
+    Check.aggregate<{ avg: number; min: number; max: number; total: number }>([
+      { $match: { monitorId: id, checkedAt: { $gte: new Date(now - RANGE_MS["24h"]) }, responseTimeMs: { $ne: null } } },
+      { $group: { _id: null, avg: { $avg: "$responseTimeMs" }, min: { $min: "$responseTimeMs" }, max: { $max: "$responseTimeMs" }, total: { $sum: 1 } } },
+    ]),
+    Incident.countDocuments({ monitorId: id }),
+  ]);
+  const stateSince: Date | null = down
+    ? (stateDoc?.startedAt ?? null)
+    : ((stateDoc as { resolvedAt?: Date } | null)?.resolvedAt ?? (monitor as { createdAt?: Date }).createdAt ?? null);
+  const [resp] = respAgg;
 
   const windowPct = (ms: number): number | null => {
     const from = now - ms;
@@ -452,21 +469,6 @@ export async function monitorSummary(req: Request, res: Response): Promise<void>
     }
     return count ? Number(((ups / count) * 100).toFixed(3)) : null;
   };
-
-  const [resp] = await Check.aggregate<{ avg: number; min: number; max: number; total: number }>([
-    { $match: { monitorId: id, checkedAt: { $gte: new Date(now - RANGE_MS["24h"]) }, responseTimeMs: { $ne: null } } },
-    {
-      $group: {
-        _id: null,
-        avg: { $avg: "$responseTimeMs" },
-        min: { $min: "$responseTimeMs" },
-        max: { $max: "$responseTimeMs" },
-        total: { $sum: 1 },
-      },
-    },
-  ]);
-
-  const totalIncidents = await Incident.countDocuments({ monitorId: id });
 
   res.json({
     status: monitor.status,
