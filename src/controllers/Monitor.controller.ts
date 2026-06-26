@@ -199,11 +199,13 @@ export async function listMonitors(req: Request, res: Response): Promise<void> {
   const { page, limit } = pageParams(req.query);
   const q = req.query as Record<string, string>;
   const filter: Record<string, unknown> = { ...(await monitorScopeFilter(req.user!)) };
-  if (q.type) filter.type = q.type;
-  if (q.projectId) filter.projectId = q.projectId;
-  if (q.enabled !== undefined) filter.enabled = q.enabled === "true";
+  // Coerce to strings before use: query objects (e.g. ?type[$ne]=x) would
+  // otherwise inject Mongo operators into the filter.
+  if (q.type) filter.type = String(q.type);
+  if (q.projectId) filter.projectId = String(q.projectId);
+  if (q.enabled !== undefined) filter.enabled = String(q.enabled) === "true";
   // Archived (soft-deleted) monitors are hidden unless explicitly requested.
-  filter.softDeletedAt = q.deleted === "true" ? { $ne: null } : null;
+  filter.softDeletedAt = String(q.deleted) === "true" ? { $ne: null } : null;
 
   const [data, total] = await Promise.all([
     Monitor.find(filter)
@@ -433,21 +435,27 @@ export async function monitorSummary(req: Request, res: Response): Promise<void>
   await assertCanReadMonitor(req.user!, monitor);
 
   const down = !!monitor.currentIncidentId;
-  let stateSince: Date | null;
-  if (down) {
-    const open = await Incident.findOne({ monitorId: id, status: "open" }).sort({ startedAt: -1 }).lean();
-    stateSince = open?.startedAt ?? null;
-  } else {
-    const lastResolved = await Incident.findOne({ monitorId: id, status: "resolved" })
-      .sort({ resolvedAt: -1 })
-      .lean();
-    stateSince = lastResolved?.resolvedAt ?? (monitor as { createdAt?: Date }).createdAt ?? null;
-  }
 
-  const buckets = await UptimeStat.find({
-    monitorId: id,
-    bucketStart: { $gte: new Date(now - RANGE_MS["30d"]) },
-  }).lean();
+  // These four reads are independent — run them in one round-trip batch instead
+  // of sequentially (this is a per-detail-page-load hot path).
+  const statePromise = down
+    ? Incident.findOne({ monitorId: id, status: "open" }).sort({ startedAt: -1 }).lean()
+    : Incident.findOne({ monitorId: id, status: "resolved" }).sort({ resolvedAt: -1 }).lean();
+  const [stateDoc, buckets, respAgg, totalIncidents] = await Promise.all([
+    statePromise,
+    UptimeStat.find({ monitorId: id, bucketStart: { $gte: new Date(now - RANGE_MS["30d"]) } })
+      .select("bucketStart ups count sumResponseMs")
+      .lean(),
+    Check.aggregate<{ avg: number; min: number; max: number; total: number }>([
+      { $match: { monitorId: id, checkedAt: { $gte: new Date(now - RANGE_MS["24h"]) }, responseTimeMs: { $ne: null } } },
+      { $group: { _id: null, avg: { $avg: "$responseTimeMs" }, min: { $min: "$responseTimeMs" }, max: { $max: "$responseTimeMs" }, total: { $sum: 1 } } },
+    ]),
+    Incident.countDocuments({ monitorId: id }),
+  ]);
+  const stateSince: Date | null = down
+    ? (stateDoc?.startedAt ?? null)
+    : ((stateDoc as { resolvedAt?: Date } | null)?.resolvedAt ?? (monitor as { createdAt?: Date }).createdAt ?? null);
+  const [resp] = respAgg;
 
   const windowPct = (ms: number): number | null => {
     const from = now - ms;
@@ -461,21 +469,6 @@ export async function monitorSummary(req: Request, res: Response): Promise<void>
     }
     return count ? Number(((ups / count) * 100).toFixed(3)) : null;
   };
-
-  const [resp] = await Check.aggregate<{ avg: number; min: number; max: number; total: number }>([
-    { $match: { monitorId: id, checkedAt: { $gte: new Date(now - RANGE_MS["24h"]) }, responseTimeMs: { $ne: null } } },
-    {
-      $group: {
-        _id: null,
-        avg: { $avg: "$responseTimeMs" },
-        min: { $min: "$responseTimeMs" },
-        max: { $max: "$responseTimeMs" },
-        total: { $sum: 1 },
-      },
-    },
-  ]);
-
-  const totalIncidents = await Incident.countDocuments({ monitorId: id });
 
   res.json({
     status: monitor.status,

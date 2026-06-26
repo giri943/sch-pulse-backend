@@ -22,16 +22,14 @@ export async function getRecommendations(input: {
   if (input.category) or.push({ matchType: "category", matchValue: input.category });
 
   try {
-    const direct = or.length
-      ? await RecommendationRule.find({ enabled: true, $or: or }).sort({ priority: 1 }).lean()
-      : [];
+    // The two rule queries are independent — run them together.
+    const [direct, errorRules] = await Promise.all([
+      or.length ? RecommendationRule.find({ enabled: true, $or: or }).sort({ priority: 1 }).lean() : Promise.resolve([]),
+      input.error ? RecommendationRule.find({ enabled: true, matchType: "errorContains" }).lean() : Promise.resolve([]),
+    ]);
 
     let errorMatches: RecommendationSnapshot[] = [];
     if (input.error) {
-      const errorRules = await RecommendationRule.find({
-        enabled: true,
-        matchType: "errorContains",
-      }).lean();
       const lowered = input.error.toLowerCase();
       errorMatches = errorRules
         .filter((r) => lowered.includes(r.matchValue.toLowerCase()))

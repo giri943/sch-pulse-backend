@@ -51,8 +51,23 @@ export async function monitorScopeFilter(user: AuthUser): Promise<Record<string,
   return { _id: { $in: [] } };
 }
 
+// Per-request memo: req.user is a fresh object each request, so a WeakMap keyed
+// by it naturally scopes the cache to one request (and is GC'd after). The
+// dashboard resolves the same scoped id-set ~7× per load — this collapses that
+// to a single query without changing any call site.
+const accessibleIdsCache = new WeakMap<AuthUser, Promise<Types.ObjectId[] | null>>();
+
 /** Monitor ids the user can access, or null when unrestricted (read:all / super). */
-export async function accessibleMonitorIds(user: AuthUser): Promise<Types.ObjectId[] | null> {
+export function accessibleMonitorIds(user: AuthUser): Promise<Types.ObjectId[] | null> {
+  let cached = accessibleIdsCache.get(user);
+  if (!cached) {
+    cached = computeAccessibleMonitorIds(user);
+    accessibleIdsCache.set(user, cached);
+  }
+  return cached;
+}
+
+async function computeAccessibleMonitorIds(user: AuthUser): Promise<Types.ObjectId[] | null> {
   const scope = readScope(user.permissions, "monitor");
   if (scope === "all") return null;
   if (scope !== "own") return [];

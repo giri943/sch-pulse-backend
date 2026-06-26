@@ -95,67 +95,82 @@ function wafPatch(result: CheckResult, now: Date): Record<string, unknown> {
 
 /** Alert that a monitor just degraded (one failed check; rechecking shortly). */
 async function sendDegradedAlert(monitor: MonitorWithId, result: CheckResult, now: Date): Promise<void> {
-  const project = await projectNameOf(monitor.projectId);
   const monitorId = String(monitor._id);
-  await sendEmail(
-    monitorDegradedEmail({
-      to: await alertRecipients(monitor),
-      monitorName: monitor.name,
-      url: monitor.url,
-      error: result.error ?? "Check failed",
-      statusCode: result.statusCode,
-      timestamp: now.toISOString(),
-      monitorId,
-      project,
-    }),
-  );
-  await notifyChannels(
-    monitor.channels as unknown[] | undefined,
-    pulseChat({
-      status: "warn",
-      title: `${monitor.name} is degraded`,
-      subtitle: project,
-      mentions: await memberMentions(monitor),
-      rows: [
-        ["URL", monitor.url],
-        ["Error", result.error ?? "Check failed"],
-        ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
-        ["Detected", now.toLocaleString("en-GB")],
-      ],
-      button: { text: "View monitor", url: chatMonitorLink(monitorId) },
-    }),
-  );
+  // Resolve the three independent reads together, then fire email + chat in
+  // parallel (allSettled so one slow/failing transport can't block the other).
+  const [project, to, mentions] = await Promise.all([
+    projectNameOf(monitor.projectId),
+    alertRecipients(monitor),
+    memberMentions(monitor),
+  ]);
+  await Promise.allSettled([
+    sendEmail(
+      monitorDegradedEmail({
+        to,
+        monitorName: monitor.name,
+        url: monitor.url,
+        error: result.error ?? "Check failed",
+        statusCode: result.statusCode,
+        timestamp: now.toISOString(),
+        monitorId,
+        project,
+      }),
+    ),
+    notifyChannels(
+      monitor.channels as unknown[] | undefined,
+      pulseChat({
+        status: "warn",
+        title: `${monitor.name} is degraded`,
+        subtitle: project,
+        mentions,
+        rows: [
+          ["URL", monitor.url],
+          ["Error", result.error ?? "Check failed"],
+          ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
+          ["Detected", now.toLocaleString("en-GB")],
+        ],
+        button: { text: "View monitor", url: chatMonitorLink(monitorId) },
+      }),
+    ),
+  ]);
   logger.warn({ monitorId }, "Degraded alert sent");
 }
 
 /** Alert that a degraded monitor recovered without ever going down. */
 async function sendDegradedRecoveredAlert(monitor: MonitorWithId, result: CheckResult, now: Date): Promise<void> {
-  const project = await projectNameOf(monitor.projectId);
   const monitorId = String(monitor._id);
-  await sendEmail(
-    monitorRecoveredEmail({
-      to: await alertRecipients(monitor),
-      monitorName: monitor.name,
-      url: monitor.url,
-      recoveredAt: now.toISOString(),
-      monitorId,
-      project,
-    }),
-  );
-  await notifyChannels(
-    monitor.channels as unknown[] | undefined,
-    pulseChat({
-      status: "up",
-      title: `${monitor.name} recovered`,
-      subtitle: project,
-      mentions: await memberMentions(monitor),
-      rows: [
-        ["URL", monitor.url],
-        ["Status", "Back to normal after a degraded check"],
-      ],
-      button: { text: "View monitor", url: chatMonitorLink(monitorId) },
-    }),
-  );
+  const [project, to, mentions] = await Promise.all([
+    projectNameOf(monitor.projectId),
+    alertRecipients(monitor),
+    memberMentions(monitor),
+  ]);
+  void result; // signature parity with the other alert helpers
+  await Promise.allSettled([
+    sendEmail(
+      monitorRecoveredEmail({
+        to,
+        monitorName: monitor.name,
+        url: monitor.url,
+        recoveredAt: now.toISOString(),
+        monitorId,
+        project,
+      }),
+    ),
+    notifyChannels(
+      monitor.channels as unknown[] | undefined,
+      pulseChat({
+        status: "up",
+        title: `${monitor.name} recovered`,
+        subtitle: project,
+        mentions,
+        rows: [
+          ["URL", monitor.url],
+          ["Status", "Back to normal after a degraded check"],
+        ],
+        button: { text: "View monitor", url: chatMonitorLink(monitorId) },
+      }),
+    ),
+  ]);
   logger.info({ monitorId }, "Degraded-recovery alert sent");
 }
 
@@ -200,38 +215,43 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
     });
     await Monitor.updateOne({ _id: monitor._id }, { currentIncidentId: incident._id });
 
-    const project = await projectNameOf(monitor.projectId);
     const monitorId = String(monitor._id);
-    await sendEmail(
-      incidentOpenedEmail({
-        to: await alertRecipients(monitor),
-        monitorName: monitor.name,
-        url: monitor.url,
-        error: result.error ?? "Check failed",
-        statusCode: result.statusCode,
-        timestamp: now.toISOString(),
-        recommendations,
-        monitorId,
-        project,
-      }),
-    );
-    const mentions = await memberMentions(monitor);
-    await notifyChannels(
-      monitor.channels as unknown[] | undefined,
-      pulseChat({
-        status: "down",
-        title: `${monitor.name} is down`,
-        subtitle: project,
-        mentions,
-        rows: [
-          ["URL", monitor.url],
-          ["Error", result.error ?? "Check failed"],
-          ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
-          ["Detected", now.toLocaleString("en-GB")],
-        ],
-        button: { text: "View incident", url: chatMonitorLink(monitorId) },
-      }),
-    );
+    const [project, to, mentions] = await Promise.all([
+      projectNameOf(monitor.projectId),
+      alertRecipients(monitor),
+      memberMentions(monitor),
+    ]);
+    await Promise.allSettled([
+      sendEmail(
+        incidentOpenedEmail({
+          to,
+          monitorName: monitor.name,
+          url: monitor.url,
+          error: result.error ?? "Check failed",
+          statusCode: result.statusCode,
+          timestamp: now.toISOString(),
+          recommendations,
+          monitorId,
+          project,
+        }),
+      ),
+      notifyChannels(
+        monitor.channels as unknown[] | undefined,
+        pulseChat({
+          status: "down",
+          title: `${monitor.name} is down`,
+          subtitle: project,
+          mentions,
+          rows: [
+            ["URL", monitor.url],
+            ["Error", result.error ?? "Check failed"],
+            ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
+            ["Detected", now.toLocaleString("en-GB")],
+          ],
+          button: { text: "View incident", url: chatMonitorLink(monitorId) },
+        }),
+      ),
+    ]);
     logger.warn({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident opened");
   } catch (err) {
     if ((err as { code?: number }).code !== 11000) throw err; // ignore duplicate open incident
@@ -275,36 +295,41 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
   );
   if (!incident) return;
 
-  const project = await projectNameOf(monitor.projectId);
   const monitorId = String(monitor._id);
   const downtime = formatDuration(incident.durationSec ?? 0);
-  await sendEmail(
-    incidentResolvedEmail({
-      to: await alertRecipients(monitor),
-      monitorName: monitor.name,
-      url: monitor.url,
-      downtime,
-      recoveredAt: now.toISOString(),
-      monitorId,
-      project,
-    }),
-  );
-  const recoveryMentions = await memberMentions(monitor);
-  await notifyChannels(
-    monitor.channels as unknown[] | undefined,
-    pulseChat({
-      status: "up",
-      title: `${monitor.name} recovered`,
-      subtitle: project,
-      mentions: recoveryMentions,
-      rows: [
-        ["URL", monitor.url],
-        ["Total downtime", downtime],
-        ["Recovered", now.toLocaleString("en-GB")],
-      ],
-      button: { text: "View monitor", url: chatMonitorLink(monitorId) },
-    }),
-  );
+  const [project, to, mentions] = await Promise.all([
+    projectNameOf(monitor.projectId),
+    alertRecipients(monitor),
+    memberMentions(monitor),
+  ]);
+  await Promise.allSettled([
+    sendEmail(
+      incidentResolvedEmail({
+        to,
+        monitorName: monitor.name,
+        url: monitor.url,
+        downtime,
+        recoveredAt: now.toISOString(),
+        monitorId,
+        project,
+      }),
+    ),
+    notifyChannels(
+      monitor.channels as unknown[] | undefined,
+      pulseChat({
+        status: "up",
+        title: `${monitor.name} recovered`,
+        subtitle: project,
+        mentions,
+        rows: [
+          ["URL", monitor.url],
+          ["Total downtime", downtime],
+          ["Recovered", now.toLocaleString("en-GB")],
+        ],
+        button: { text: "View monitor", url: chatMonitorLink(monitorId) },
+      }),
+    ),
+  ]);
   logger.info({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident resolved");
 }
 
