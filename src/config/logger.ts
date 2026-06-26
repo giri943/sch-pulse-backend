@@ -8,12 +8,10 @@ import { config } from "./index";
  */
 export const logger = pino({
   level: config.isProd ? "info" : "debug",
-  // pino-pretty is a dev-only tool (extra worker thread + non-JSON output). In
-  // production emit structured JSON so log aggregators can parse it and the
-  // hot path isn't paying the pretty-printer's cost.
-  transport: config.isProd
-    ? undefined
-    : {
+  // Pretty single-line logs by default (readable when tailing pm2/console).
+  // Set LOG_PRETTY=false for raw JSON when a log aggregator ingests the output.
+  transport: config.logPretty
+    ? {
         target: "pino-pretty",
         options: {
           colorize: true,
@@ -21,5 +19,6 @@ export const logger = pino({
           singleLine: true,
           ignore: "pid,hostname,req,res,responseTime,reqId,context",
         },
-      },
+      }
+    : undefined,
 });
