@@ -8,13 +8,17 @@ import { config } from "./index";
  */
 export const logger = pino({
   level: config.isProd ? "info" : "debug",
-  transport: {
-    target: "pino-pretty",
-    options: {
-      colorize: true,
-      translateTime: "SYS:HH:MM:ss",
-      singleLine: true,
-      ignore: "pid,hostname,req,res,responseTime,reqId,context",
-    },
-  },
+  // Pretty single-line logs by default (readable when tailing pm2/console).
+  // Set LOG_PRETTY=false for raw JSON when a log aggregator ingests the output.
+  transport: config.logPretty
+    ? {
+        target: "pino-pretty",
+        options: {
+          colorize: true,
+          translateTime: "SYS:HH:MM:ss",
+          singleLine: true,
+          ignore: "pid,hostname,req,res,responseTime,reqId,context",
+        },
+      }
+    : undefined,
 });

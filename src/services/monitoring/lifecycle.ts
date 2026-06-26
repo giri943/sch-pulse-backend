@@ -44,8 +44,25 @@ async function recipients(m: LifecycleMonitor): Promise<string[]> {
   return [...new Set([...emails, ...(m.extraAlertEmails ?? [])])];
 }
 
+// Re-entrancy guard: the hourly pass can run long (per-monitor RDAP probes), so
+// skip a new pass if the previous one is still running rather than overlapping.
+let lifecycleRunning = false;
+
 /** One lifecycle pass: expiry reminders, soft-delete on expiry, purge old soft-deletes. */
 export async function runLifecycle(): Promise<void> {
+  if (lifecycleRunning) {
+    logger.warn("Lifecycle pass still running — skipping this tick");
+    return;
+  }
+  lifecycleRunning = true;
+  try {
+    await runLifecyclePass();
+  } finally {
+    lifecycleRunning = false;
+  }
+}
+
+async function runLifecyclePass(): Promise<void> {
   const now = new Date();
 
   // 1) Reminders + soft-delete for monitors with a monitoring period.

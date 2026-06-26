@@ -10,9 +10,11 @@ export function notFound(req: Request, _res: Response, next: NextFunction): void
 /** Normalize any thrown value into an ApiError. */
 export function errorConverter(err: unknown, _req: Request, _res: Response, next: NextFunction): void {
   if (err instanceof ApiError) return next(err);
-  // Mongo duplicate key → 409
+  // Mongo duplicate key → 409. Don't echo the offending field/value (keyValue)
+  // back to the client — that leaks DB schema/data. Log it server-side instead.
   if (typeof err === "object" && err !== null && (err as { code?: number }).code === 11000) {
-    return next(ApiError.conflict("Duplicate key", (err as { keyValue?: unknown }).keyValue));
+    logger.warn({ keyValue: (err as { keyValue?: unknown }).keyValue }, "Duplicate key");
+    return next(ApiError.conflict("A record with that value already exists"));
   }
   const message = err instanceof Error ? err.message : "Something went wrong";
   next(new ApiError(500, message, "INTERNAL_ERROR"));

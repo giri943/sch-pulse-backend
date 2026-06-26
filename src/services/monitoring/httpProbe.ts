@@ -15,6 +15,7 @@
  */
 
 import { normalizeError } from "./types";
+import { assertPublicUrl } from "../../utils/ssrfGuard";
 
 /** Bytes of body to read for WAF/content fingerprinting. Enough for block pages. */
 const BODY_SAMPLE_BYTES = 16 * 1024;
@@ -61,7 +62,12 @@ export interface ProbeOptions {
   timeoutMs?: number;
   /** Whether to read the body sample (skip for HEAD or pure status checks). */
   readBody?: boolean;
+  /** Retries on a transient connection/timeout error (no HTTP response). Default 1. */
+  retries?: number;
 }
+
+/** Wait `ms`, then resolve. Used for the brief back-off between probe retries. */
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** Parse a single Set-Cookie line into [name, value]; null if unparseable. */
 function parseCookie(line: string): [string, string] | null {
@@ -102,10 +108,28 @@ async function readBodySample(res: Response): Promise<string> {
 }
 
 /**
+ * Probe a URL, retrying once on a transient connection/timeout error. Sites
+ * behind a tight WAF intermittently stall or drop the monitor's connection
+ * (while real browsers pass) — a quick retry absorbs that blip so we don't raise
+ * a false "down". A real HTTP response (even a WAF block page) is conclusive and
+ * is never retried; only a no-response error is.
+ */
+export async function probe(url: string, opts: ProbeOptions = {}): Promise<ProbeOutcome> {
+  const retries = Math.max(0, opts.retries ?? 1);
+  let outcome: ProbeOutcome = { errorCode: "Not attempted", responseTimeMs: 0 };
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await delay(1000); // brief back-off before retrying
+    outcome = await attemptProbe(url, opts);
+    if (outcome.response) return outcome; // got a response → conclusive
+  }
+  return outcome; // exhausted retries — return the last transient error
+}
+
+/**
  * Fetch a URL like a browser: follow redirects manually while carrying cookies,
  * so WAF challenge cookies (e.g. F5 `TS…`) are replayed on the next hop.
  */
-export async function probe(url: string, opts: ProbeOptions = {}): Promise<ProbeOutcome> {
+async function attemptProbe(url: string, opts: ProbeOptions = {}): Promise<ProbeOutcome> {
   const method = opts.method ?? "GET";
   const perHopTimeout = Math.max(opts.timeoutMs ?? 10_000, CHALLENGE_BUDGET_MS);
   const headers = { ...DEFAULT_HEADERS, ...(opts.headers ?? {}) };
@@ -123,6 +147,9 @@ export async function probe(url: string, opts: ProbeOptions = {}): Promise<Probe
     const timer = setTimeout(() => controller.abort(), perHopTimeout);
     const hopStart = Date.now();
     try {
+      // SSRF guard: re-validate every hop so a redirect can't reach an internal
+      // host or the cloud metadata endpoint. Throws → treated as a probe error.
+      await assertPublicUrl(current);
       const cookieHeader = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
       const res = await fetch(current, {
         method,
