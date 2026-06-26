@@ -44,6 +44,14 @@ const envSchema = z.object({
   // Google sign-in (restricted to ALLOWED_EMAIL_DOMAIN)
   GOOGLE_CLIENT_ID: z.string().optional(),
   ALLOWED_EMAIL_DOMAIN: z.string().default("schbang.com"),
+
+  // SSRF guard: by default, monitor/SSL/domain probes refuse to connect to
+  // private/loopback/link-local/metadata addresses. Set to "true" only if you
+  // intentionally monitor internal hosts on a trusted network.
+  ALLOW_PRIVATE_MONITOR_TARGETS: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -105,4 +113,5 @@ export const config = {
   },
   aws: { region: env.AWS_REGION, sesFrom: env.SES_FROM_EMAIL ?? env.MAIL_FROM },
   google: { clientId: env.GOOGLE_CLIENT_ID, allowedDomain: env.ALLOWED_EMAIL_DOMAIN },
+  allowPrivateMonitorTargets: env.ALLOW_PRIVATE_MONITOR_TARGETS,
 } as const;

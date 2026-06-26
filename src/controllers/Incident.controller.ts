@@ -21,7 +21,8 @@ export async function listIncidents(req: Request, res: Response): Promise<void> 
   const { page, limit } = pageParams(req.query);
   const q = req.query as Record<string, string>;
   const filter: Record<string, unknown> = {};
-  if (q.status) filter.status = q.status;
+  // Coerce so query objects can't inject Mongo operators (e.g. ?status[$ne]=x).
+  if (q.status) filter.status = String(q.status);
 
   // Scope to the monitors the user can see, optionally narrowed to one project.
   const ids = await accessibleMonitorIds(req.user!); // null = full access
@@ -32,7 +33,8 @@ export async function listIncidents(req: Request, res: Response): Promise<void> 
   }
   if (q.monitorId) {
     // Explicit single monitor — honoured only if the caller may see it.
-    filter.monitorId = allowedIds && !allowedIds.includes(String(q.monitorId)) ? { $in: [] } : q.monitorId;
+    const monitorId = String(q.monitorId);
+    filter.monitorId = allowedIds && !allowedIds.includes(monitorId) ? { $in: [] } : monitorId;
   } else if (allowedIds !== null) {
     filter.monitorId = { $in: allowedIds };
   }

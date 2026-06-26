@@ -15,6 +15,7 @@
  */
 
 import { normalizeError } from "./types";
+import { assertPublicUrl } from "../../utils/ssrfGuard";
 
 /** Bytes of body to read for WAF/content fingerprinting. Enough for block pages. */
 const BODY_SAMPLE_BYTES = 16 * 1024;
@@ -123,6 +124,9 @@ export async function probe(url: string, opts: ProbeOptions = {}): Promise<Probe
     const timer = setTimeout(() => controller.abort(), perHopTimeout);
     const hopStart = Date.now();
     try {
+      // SSRF guard: re-validate every hop so a redirect can't reach an internal
+      // host or the cloud metadata endpoint. Throws → treated as a probe error.
+      await assertPublicUrl(current);
       const cookieHeader = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
       const res = await fetch(current, {
         method,
