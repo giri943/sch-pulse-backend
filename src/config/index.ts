@@ -19,9 +19,22 @@ const envSchema = z.object({
   SUPER_ADMIN_EMAILS: z.string().default(""),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().default(300),
+  // Pretty, human-readable single-line logs (default). Set to "false" to emit
+  // raw JSON instead — useful only if a log aggregator (Datadog/ELK) ingests them.
+  LOG_PRETTY: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
 
   SCHEDULER_CRON: z.string().default("*/20 * * * * *"),
   CHECK_CONCURRENCY: z.coerce.number().int().min(1).default(10),
+  // Set to "false" to run this instance as API-only (no monitoring/lifecycle
+  // crons). Use for a local/second instance so it doesn't double-check the same
+  // sites as production (which doubles load on rate-limiting WAFs).
+  SCHEDULER_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
 
   MAIL_DRIVER: z.enum(["smtp", "ses", "sendgrid", "mailjet", "brevo", "console"]).default("smtp"),
   MAIL_FROM: z.string().default("alerts@schbang.com"),
@@ -94,8 +107,9 @@ export const config = {
   appBaseUrl: env.APP_BASE_URL,
   superAdminEmails: env.SUPER_ADMIN_EMAILS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
   rateLimit: { windowMs: env.RATE_LIMIT_WINDOW_MS, max: env.RATE_LIMIT_MAX },
+  logPretty: env.LOG_PRETTY,
 
-  scheduler: { cron: env.SCHEDULER_CRON, concurrency: env.CHECK_CONCURRENCY },
+  scheduler: { cron: env.SCHEDULER_CRON, concurrency: env.CHECK_CONCURRENCY, enabled: env.SCHEDULER_ENABLED },
 
   mail: {
     driver: env.MAIL_DRIVER,

@@ -71,16 +71,24 @@ async function bootstrap(): Promise<void> {
   server.listen(config.port);
 
   // In-process crons (no AWS): monitoring checks (every ~20s) + lifecycle (hourly).
-  const monitoringTask: ScheduledTask = startMonitoring();
-  const lifecycleTask: ScheduledTask = startLifecycle();
+  // Disable on a secondary/local instance (SCHEDULER_ENABLED=false) so it doesn't
+  // double-check the same sites as production.
+  let monitoringTask: ScheduledTask | null = null;
+  let lifecycleTask: ScheduledTask | null = null;
+  if (config.scheduler.enabled) {
+    monitoringTask = startMonitoring();
+    lifecycleTask = startLifecycle();
+  } else {
+    logger.warn("Scheduler disabled (SCHEDULER_ENABLED=false) — running API-only, no monitoring/lifecycle crons");
+  }
 
   let shuttingDown = false;
   const shutdown = (signal: string) => {
     if (shuttingDown) return; // ignore repeated signals during a restart
     shuttingDown = true;
     logger.info(`${signal} received — shutting down`);
-    monitoringTask.stop();
-    lifecycleTask.stop();
+    monitoringTask?.stop();
+    lifecycleTask?.stop();
     // Immediately drop keep-alive sockets (e.g. the dashboard's polling) so the
     // port is released right away — otherwise tsx watch's new process hits EADDRINUSE.
     server.closeAllConnections?.();
