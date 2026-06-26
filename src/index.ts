@@ -93,6 +93,13 @@ async function bootstrap(): Promise<void> {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("unhandledRejection", (reason) => logger.error({ reason }, "Unhandled rejection"));
+  // After an uncaught exception the process is in an undefined state — log and
+  // exit so the supervisor (pm2) restarts a clean one rather than serving from
+  // a corrupted process. /readyz makes the restart safe.
+  process.on("uncaughtException", (err) => {
+    logger.fatal({ err }, "Uncaught exception — shutting down");
+    shutdown("uncaughtException");
+  });
 }
 
 bootstrap().catch((err) => {

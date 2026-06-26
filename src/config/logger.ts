@@ -8,13 +8,18 @@ import { config } from "./index";
  */
 export const logger = pino({
   level: config.isProd ? "info" : "debug",
-  transport: {
-    target: "pino-pretty",
-    options: {
-      colorize: true,
-      translateTime: "SYS:HH:MM:ss",
-      singleLine: true,
-      ignore: "pid,hostname,req,res,responseTime,reqId,context",
-    },
-  },
+  // pino-pretty is a dev-only tool (extra worker thread + non-JSON output). In
+  // production emit structured JSON so log aggregators can parse it and the
+  // hot path isn't paying the pretty-printer's cost.
+  transport: config.isProd
+    ? undefined
+    : {
+        target: "pino-pretty",
+        options: {
+          colorize: true,
+          translateTime: "SYS:HH:MM:ss",
+          singleLine: true,
+          ignore: "pid,hostname,req,res,responseTime,reqId,context",
+        },
+      },
 });
