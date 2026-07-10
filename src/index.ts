@@ -37,7 +37,7 @@ async function bootstrap(): Promise<void> {
 
   server.on("listening", () => {
     logger.info(
-      `🚀 Schbang Pulse backend on :${config.port} (${config.env}) — mail: ${config.mail.driver} from <${config.mail.from}>`,
+      `Schbang Pulse backend on :${config.port} (${config.env}) - mail: ${config.mail.driver} from <${config.mail.from}>`,
     );
   });
 
@@ -57,7 +57,7 @@ async function bootstrap(): Promise<void> {
         process.exit(1);
       }
       if (bindAttempts === 1) {
-        logger.warn(`Port ${config.port} busy — reclaiming it from the previous instance…`);
+        logger.warn(`Port ${config.port} busy - reclaiming it from the previous instance...`);
       }
       // Actively kill whatever still holds the port (a dying reload often lingers
       // a moment after leaving LISTENING), then retry the bind.
@@ -82,14 +82,14 @@ async function bootstrap(): Promise<void> {
     lifecycleTask = startLifecycle();
     incidentLifecycleTask = startIncidentLifecycle();
   } else {
-    logger.warn("Scheduler disabled (SCHEDULER_ENABLED=false) — running API-only, no monitoring/lifecycle crons");
+    logger.warn("Background jobs disabled (SCHEDULER_ENABLED=false) - API-only: no health checks, renewals, or escalations");
   }
 
   let shuttingDown = false;
   const shutdown = (signal: string) => {
     if (shuttingDown) return; // ignore repeated signals during a restart
     shuttingDown = true;
-    logger.info(`${signal} received — shutting down`);
+    logger.info(`${signal} received - shutting down`);
     monitoringTask?.stop();
     lifecycleTask?.stop();
     incidentLifecycleTask?.stop();
@@ -109,7 +109,7 @@ async function bootstrap(): Promise<void> {
   // exit so the supervisor (pm2) restarts a clean one rather than serving from
   // a corrupted process. /readyz makes the restart safe.
   process.on("uncaughtException", (err) => {
-    logger.fatal({ err }, "Uncaught exception — shutting down");
+    logger.fatal({ err }, "Uncaught exception - shutting down");
     shutdown("uncaughtException");
   });
 }

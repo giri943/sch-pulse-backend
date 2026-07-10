@@ -27,5 +27,5 @@ export async function sendViaBrevo(msg: EmailMessage): Promise<void> {
       textContent: msg.text,
     }),
   });
-  logger.info({ to: msg.to, subject: msg.subject }, "📧 Email sent (brevo)");
+  logger.info({ to: msg.to, subject: msg.subject }, "Email sent (brevo)");
 }

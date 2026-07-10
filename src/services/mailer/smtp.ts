@@ -36,7 +36,7 @@ async function getTransporter(): Promise<Transporter> {
       secure: false,
       auth: { user: test.user, pass: test.pass },
     });
-    logger.warn("No SMTP_HOST set — using Ethereal test inbox; preview URLs will be logged");
+    logger.warn("No SMTP_HOST set - using Ethereal test inbox; preview URLs will be logged");
   }
   return transporter;
 }

@@ -28,5 +28,5 @@ export async function sendViaSendgrid(msg: EmailMessage): Promise<void> {
       ],
     }),
   });
-  logger.info({ to: msg.to, subject: msg.subject }, "📧 Email sent (sendgrid)");
+  logger.info({ to: msg.to, subject: msg.subject }, "Email sent (sendgrid)");
 }

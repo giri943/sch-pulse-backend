@@ -45,7 +45,7 @@ export async function sendEmail(msg: EmailMessage): Promise<SendResult> {
         await sendViaBrevo(msg);
         break;
       case "console":
-        logger.info({ to: msg.to, subject: msg.subject, body: msg.text }, "📧 Email (console driver)");
+        logger.info({ to: msg.to, subject: msg.subject, body: msg.text }, "Email (console driver)");
         break;
       default:
         await sendViaSmtp(msg);
