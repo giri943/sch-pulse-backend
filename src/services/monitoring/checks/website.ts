@@ -42,5 +42,6 @@ export async function websiteCheck(monitor: MonitorWithId): Promise<CheckResult>
     error: c.up ? null : c.reason,
     classification: c.classification,
     waf: c.waf,
+    server: r.headers.get("server") ?? undefined,
   };
 }

@@ -1,5 +1,6 @@
 import type { EmailMessage } from "./index";
 import { config } from "../../config";
+import { humanizeError } from "../../utils/humanizeError";
 
 interface RecommendationSnap {
   title: string;
@@ -115,6 +116,7 @@ export function incidentOpenedEmail(p: {
   url: string;
   error: string;
   statusCode?: number;
+  server?: string | null;
   timestamp: string;
   recommendations: RecommendationSnap[];
   monitorId?: string;
@@ -122,11 +124,13 @@ export function incidentOpenedEmail(p: {
 }): EmailMessage {
   const subject = `[Schbang Pulse] ${p.monitorName} is DOWN`;
   const link = monitorLink(p.monitorId);
+  const human = humanizeError({ statusCode: p.statusCode, error: p.error, server: p.server });
   const intro = `We detected that <strong>${esc(p.monitorName)}</strong> stopped responding to our checks. The incident is open and we'll let you know the moment it recovers.`;
   const body =
     details([
       ["Project", p.project],
       ["URL", p.url],
+      ["What this means", human],
       ["Error", p.error],
       ["Response code", p.statusCode != null ? String(p.statusCode) : "—"],
       ["Detected at", fmtWhen(p.timestamp)],
@@ -140,6 +144,7 @@ export function incidentOpenedEmail(p: {
     text: textBlock(subject, [
       ["Project", p.project],
       ["URL", p.url],
+      ["What this means", human],
       ["Error", p.error],
       ["Response code", p.statusCode != null ? String(p.statusCode) : "—"],
       ["Detected at", fmtWhen(p.timestamp)],
@@ -193,17 +198,20 @@ export function monitorDegradedEmail(p: {
   url: string;
   error: string;
   statusCode?: number;
+  server?: string | null;
   timestamp: string;
   monitorId?: string;
   project?: string;
 }): EmailMessage {
   const subject = `[Schbang Pulse] ${p.monitorName} is degraded`;
   const link = monitorLink(p.monitorId);
+  const human = humanizeError({ statusCode: p.statusCode, error: p.error, server: p.server });
   const intro = `A check for <strong>${esc(p.monitorName)}</strong> just failed. We're re-checking in ~2 minutes to confirm whether it's a brief blip or a real outage — you'll get a follow-up either way.`;
   const body =
     details([
       ["Project", p.project],
       ["URL", p.url],
+      ["What this means", human],
       ["Error", p.error],
       ["Response code", p.statusCode != null ? String(p.statusCode) : "—"],
       ["First seen", fmtWhen(p.timestamp)],
@@ -215,6 +223,7 @@ export function monitorDegradedEmail(p: {
     text: textBlock(subject, [
       ["Project", p.project],
       ["URL", p.url],
+      ["What this means", human],
       ["Error", p.error],
       ["Response code", p.statusCode != null ? String(p.statusCode) : "—"],
       ["First seen", fmtWhen(p.timestamp)],

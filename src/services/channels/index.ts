@@ -1,5 +1,6 @@
 import { NotificationChannel } from "../../models/notificationChannel.model";
 import { logger } from "../../config/logger";
+import { config } from "../../config";
 
 /** A chat notification: rich card for display + plain text for the preview/fallback. */
 export interface ChatMessage {
@@ -39,6 +40,12 @@ async function post(webhookUrl: string, body: unknown): Promise<boolean> {
  */
 export async function postGoogleChat(webhookUrl: string, message: ChatMessage | string): Promise<void> {
   const msg: ChatMessage = typeof message === "string" ? { text: message } : message;
+  // Console driver: log the payload instead of posting — local testing without
+  // pinging a real Chat space (mirror of MAIL_DRIVER=console).
+  if (config.chat.driver === "console") {
+    logger.info({ text: msg.text }, "💬 Chat (console driver)");
+    return;
+  }
   if (msg.card) {
     const ok = await post(webhookUrl, { text: msg.text, cardsV2: [msg.card] });
     if (!ok) await post(webhookUrl, { text: msg.text });

@@ -72,5 +72,5 @@ export async function apiCheck(monitor: MonitorWithId): Promise<CheckResult> {
   // If the firewall says "up" we trust it; otherwise an assertion failure on a 2xx
   // surfaces as the specific reason.
   const error = c.up ? null : (c.classification === "content_mismatch" && assertionFailure) || c.reason;
-  return { up: c.up, statusCode: r.status, responseTimeMs: r.responseTimeMs, error, classification: c.classification, waf: c.waf };
+  return { up: c.up, statusCode: r.status, responseTimeMs: r.responseTimeMs, error, classification: c.classification, waf: c.waf, server: r.headers.get("server") ?? undefined };
 }

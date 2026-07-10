@@ -21,6 +21,8 @@ const incidentSchema = new Schema(
       statusCode: { type: Number },
       error: { type: String },
       responseTimeMs: { type: Number },
+      /** The `Server` header that returned the failing response (nginx, cloudflare, …). */
+      server: { type: String },
     },
     recommendations: { type: [recommendationSnapshotSchema], default: [] },
     rootCauseNotes: { type: String, default: "" },
