@@ -27,6 +27,7 @@ const canUpdate = requirePermission(P.INCIDENT_UPDATE_OWN, P.INCIDENT_UPDATE_ALL
 
 router.get("/", canRead, validate({ query: paginationSchema }), catchAsync(IncidentController.listIncidents));
 router.get("/:id", canRead, validate({ params: idParamSchema }), catchAsync(IncidentController.getIncident));
+router.get("/:id/mentionable", canRead, validate({ params: idParamSchema }), catchAsync(IncidentController.getMentionableUsers));
 router.patch(
   "/:id",
   canUpdate,
