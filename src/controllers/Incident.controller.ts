@@ -8,6 +8,14 @@ import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
 import { accessibleMonitorIds, canWriteIncidentFor } from "../utils/access";
 import { humanizeError } from "../utils/humanizeError";
+import { sanitizeNoteHtml } from "../utils/sanitizeNotes";
+import { notifyIncidentMentions } from "../services/incidentMentions";
+
+/** Normalize a body value to a de-duplicated list of valid ObjectId strings. */
+function toObjectIdList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.map((x) => String(x)).filter((s) => Types.ObjectId.isValid(s)))];
+}
 
 /** Load the incident's monitor and 403 unless the user may write to it. */
 async function assertIncidentWritable(req: Request, monitorId: unknown) {
@@ -74,12 +82,38 @@ export async function updateIncident(req: Request, res: Response): Promise<void>
   if (!incident) throw ApiError.notFound("Incident not found");
   await assertIncidentWritable(req, incident.monitorId);
 
-  if (req.body.rootCauseNotes !== undefined) incident.rootCauseNotes = req.body.rootCauseNotes;
-  if (req.body.resolutionNotes !== undefined) incident.resolutionNotes = req.body.resolutionNotes;
+  // Mentions already stored on this incident (used to notify only the NEW ones).
+  const before = new Set<string>([
+    ...(incident.rootCauseMentions ?? []).map(String),
+    ...(incident.resolutionMentions ?? []).map(String),
+  ]);
+
+  // Notes are rich text (TipTap HTML) — sanitize before storing to prevent stored XSS.
+  if (req.body.rootCauseNotes !== undefined) incident.rootCauseNotes = sanitizeNoteHtml(req.body.rootCauseNotes);
+  if (req.body.resolutionNotes !== undefined) incident.resolutionNotes = sanitizeNoteHtml(req.body.resolutionNotes);
+  if (req.body.rootCauseMentions !== undefined) incident.rootCauseMentions = toObjectIdList(req.body.rootCauseMentions) as never;
+  if (req.body.resolutionMentions !== undefined) incident.resolutionMentions = toObjectIdList(req.body.resolutionMentions) as never;
   if (req.body.acknowledge) incident.acknowledgedBy = req.user!.id as never;
   await incident.save();
   await writeAudit(req, "incident.update", { targetType: "incident", targetId: req.params.id });
   res.json(incident);
+
+  // Notify newly-added mentions only (union of both note fields minus what was
+  // already stored). Fire-and-forget after the response — never blocks the save.
+  const after = new Set<string>([
+    ...(incident.rootCauseMentions ?? []).map(String),
+    ...(incident.resolutionMentions ?? []).map(String),
+  ]);
+  const newlyAdded = [...after].filter((id) => !before.has(id));
+  if (newlyAdded.length) {
+    void notifyIncidentMentions({
+      incidentId: req.params.id,
+      monitorId: incident.monitorId,
+      actorId: req.user!.id,
+      actorName: req.user!.name,
+      newUserIds: newlyAdded,
+    });
+  }
 }
 
 export async function resolveIncident(req: Request, res: Response): Promise<void> {
