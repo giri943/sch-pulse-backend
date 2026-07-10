@@ -154,6 +154,37 @@ export function incidentOpenedEmail(p: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Incident: escalation (unresolved past the threshold → looped in leadership)
+// ─────────────────────────────────────────────────────────────────────────────
+export function incidentEscalationEmail(p: {
+  to: string[];
+  monitorName: string;
+  url: string;
+  downtime: string;
+  afterMinutes: number;
+  whatThisMeans?: string;
+  monitorId?: string;
+  project?: string;
+}): EmailMessage {
+  const subject = `🚨 [Schbang Pulse] Escalation: ${p.monitorName} still down (${p.downtime})`;
+  const link = monitorLink(p.monitorId);
+  const intro = `<strong>${esc(p.monitorName)}</strong> has been down for <strong>${esc(p.downtime)}</strong> and is <strong>still not resolved</strong>. It has passed the ${p.afterMinutes}-minute escalation threshold and now needs leadership attention.`;
+  const rows: [string, string | null | undefined][] = [
+    ["Project", p.project],
+    ["URL", p.url],
+    ["Down for", p.downtime],
+    ...(p.whatThisMeans ? [["What this means", p.whatThisMeans] as [string, string]] : []),
+    ["Escalation threshold", `${p.afterMinutes} minutes`],
+  ];
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "down", eyebrow: "Incident · Escalation", title: `${p.monitorName} needs attention`, intro, bodyHtml: details(rows) + button("View incident", link), footerNote: footerFor(p.monitorName) }),
+    text: textBlock(subject, [...rows, ["View", link]]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Incident: resolved
 // ─────────────────────────────────────────────────────────────────────────────
 export function incidentResolvedEmail(p: {
@@ -577,7 +608,13 @@ function textBlock(subject: string, rows: [string, string | null | undefined][])
 /** Format seconds as a human downtime string. */
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  if (m < 60) return `${m}m ${seconds % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  const totalMin = Math.floor(seconds / 60);
+  if (totalMin < 60) return `${totalMin}m ${seconds % 60}s`;
+  const totalHours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (totalHours < 24) return `${totalHours}h ${mins}m`;
+  // Beyond a day, read it as days + hours + minutes (e.g. "31d 23h 14m").
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return `${days}d ${hours}h ${mins}m`;
 }

@@ -3,6 +3,7 @@ import { Incident } from "../../models/incident.model";
 import { Monitor } from "../../models/monitor.model";
 import { User } from "../../models/user.model";
 import { ProjectMember } from "../../models/projectMember.model";
+import { EscalationPolicy } from "../../models/escalationPolicy.model";
 import { FAILURE_THRESHOLD, SSL_WARN_DAYS } from "../../utils/constants";
 import { logger } from "../../config/logger";
 import type { CheckResult, MonitorWithId } from "./types";
@@ -302,11 +303,18 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
 
   const monitorId = String(monitor._id);
   const downtime = formatDuration(incident.durationSec ?? 0);
-  const [project, to, mentions] = await Promise.all([
+  // If this incident had been escalated to leadership, loop them in on the
+  // resolution too (close the loop). Non-escalated incidents don't notify them.
+  const wasEscalated = (incident.escalationsSent?.length ?? 0) > 0;
+  const [project, baseRecipients, mentions, leadershipEmails] = await Promise.all([
     projectNameOf(monitor.projectId),
     alertRecipients(monitor),
     memberMentions(monitor),
+    wasEscalated
+      ? EscalationPolicy.findOne({ key: "global" }).lean().then((p) => p?.emails ?? [])
+      : Promise.resolve([] as string[]),
   ]);
+  const to = [...new Set([...baseRecipients, ...leadershipEmails])];
   await Promise.allSettled([
     sendEmail(
       incidentResolvedEmail({
