@@ -76,7 +76,7 @@ export async function tick(): Promise<void> {
       })),
     );
     await runPool(due, config.scheduler.concurrency, runCheck);
-    logger.info({ count: due.length }, "Scheduler processed due monitors");
+    logger.info({ count: due.length }, `Health checks: ${due.length} monitors checked this cycle`);
   } finally {
     ticking = false;
   }
@@ -84,10 +84,10 @@ export async function tick(): Promise<void> {
 
 /** Start the in-process monitoring cron. Returns the task so it can be stopped. */
 export function startMonitoring(): ScheduledTask {
-  logger.info({ cron: config.scheduler.cron }, "Monitoring scheduler started (in-process node-cron)");
+  logger.info({ cron: config.scheduler.cron }, "Health-check scheduler started - probing due monitors every 20s");
   const task = cron.schedule(config.scheduler.cron, () => {
-    tick().catch((err) => logger.error({ err }, "Scheduler tick failed"));
+    tick().catch((err) => logger.error({ err }, "Health-check cycle failed"));
   });
-  tick().catch((err) => logger.error({ err }, "Initial scheduler tick failed"));
+  tick().catch((err) => logger.error({ err }, "Health-check cycle failed"));
   return task;
 }

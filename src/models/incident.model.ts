@@ -25,11 +25,19 @@ const incidentSchema = new Schema(
       server: { type: String },
     },
     recommendations: { type: [recommendationSnapshotSchema], default: [] },
+    // Notes are rich text (sanitized HTML). Mentions store the @-tagged users so
+    // we can notify only the newly-added ones on save.
     rootCauseNotes: { type: String, default: "" },
     resolutionNotes: { type: String, default: "" },
+    rootCauseMentions: { type: [Types.ObjectId], ref: "User", default: [] },
+    resolutionMentions: { type: [Types.ObjectId], ref: "User", default: [] },
+    /** Last time we nudged the team to fill an empty RCA (24h cadence, resolved incidents). */
+    lastRcaReminderAt: { type: Date, default: null },
     acknowledgedBy: { type: Types.ObjectId, ref: "User", default: null },
     notifiedDown: { type: Boolean, default: false },
     notifiedResolved: { type: Boolean, default: false },
+    /** Escalation thresholds (minutes) already fired for this incident — dedupes re-escalation. */
+    escalationsSent: { type: [Number], default: [] },
   },
   { timestamps: true },
 );

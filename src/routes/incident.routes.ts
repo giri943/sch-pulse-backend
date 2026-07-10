@@ -7,9 +7,15 @@ import { catchAsync } from "../utils/catchAsync";
 import { idParamSchema, paginationSchema } from "../validations/common.validation";
 import { PERMISSIONS as P } from "../utils/permissions";
 
+// Notes are rich text (TipTap HTML), so the cap is generous — markup + mention
+// spans inflate the byte count well beyond the visible text. The controller
+// sanitizes the HTML before storing. Mentions are user id arrays (@-tagged users).
+const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "invalid id");
 const updateIncidentSchema = z.object({
-  rootCauseNotes: z.string().max(5000).optional(),
-  resolutionNotes: z.string().max(5000).optional(),
+  rootCauseNotes: z.string().max(50000).optional(),
+  resolutionNotes: z.string().max(50000).optional(),
+  rootCauseMentions: z.array(objectId).max(50).optional(),
+  resolutionMentions: z.array(objectId).max(50).optional(),
   acknowledge: z.boolean().optional(),
 });
 

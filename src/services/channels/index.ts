@@ -43,7 +43,7 @@ export async function postGoogleChat(webhookUrl: string, message: ChatMessage | 
   // Console driver: log the payload instead of posting — local testing without
   // pinging a real Chat space (mirror of MAIL_DRIVER=console).
   if (config.chat.driver === "console") {
-    logger.info({ text: msg.text }, "💬 Chat (console driver)");
+    logger.info({ text: msg.text }, "Chat (console driver)");
     return;
   }
   if (msg.card) {

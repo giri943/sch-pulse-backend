@@ -40,7 +40,7 @@ export function pulseChat(o: PulseChatOpts): ChatMessage {
   const textLines = [
     `${emoji} *${o.title}*${o.subtitle ? ` — ${o.subtitle}` : ""}`,
     ...rows.map(([k, v]) => `${k}: ${v}`),
-    o.button?.url ? o.button.url : "",
+    o.button?.url ? `Check the monitor at ${o.button.url}` : "",
   ].filter(Boolean);
   const text = `${o.mentions ? o.mentions + "\n" : ""}${textLines.join("\n")}`;
 
