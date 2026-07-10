@@ -168,6 +168,15 @@ export async function logout(req: Request, res: Response): Promise<void> {
   res.json({ success: true });
 }
 
+/**
+ * Public: tells the frontend which sign-in methods are available so it can show
+ * the right UI. Password login is off by default (Google-only); when the
+ * break-glass flag is on, the login/reset pages re-render the password forms.
+ */
+export async function authConfig(_req: Request, res: Response): Promise<void> {
+  res.json({ passwordLoginEnabled: config.auth.passwordLoginEnabled });
+}
+
 export async function forgotPassword(req: Request, res: Response): Promise<void> {
   const user = await User.findOne({ email: req.body.email });
   if (user) {
