@@ -31,5 +31,5 @@ export async function sendViaMailjet(msg: EmailMessage): Promise<void> {
       ],
     }),
   });
-  logger.info({ to: msg.to, subject: msg.subject }, "📧 Email sent (mailjet)");
+  logger.info({ to: msg.to, subject: msg.subject }, "Email sent (mailjet)");
 }

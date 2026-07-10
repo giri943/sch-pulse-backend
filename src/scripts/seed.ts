@@ -41,7 +41,7 @@ async function main(): Promise<void> {
     { name: MEMBER_ROLE, description: "Create & manage own / tagged monitors", permissions: MEMBER_PERMISSIONS, isSystem: true },
     { upsert: true, new: true },
   );
-  logger.info("✅ System roles ready (Super Admin, Member)");
+  logger.info("System roles ready (Super Admin, Member)");
 
   // 2) Super-admin user
   const admin = await User.findOne({ email: adminEmail });
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
       authProvider: "local",
       passwordHash: await hashPassword(adminPassword),
     });
-    logger.info(`✅ Created super admin: ${adminEmail}`);
+    logger.info(`Created super admin: ${adminEmail}`);
   } else {
     logger.info(`Super admin already exists: ${adminEmail}`);
   }
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
       { upsert: true },
     );
   }
-  logger.info(`✅ Seeded ${RULES.length} recommendation rules`);
+  logger.info(`Seeded ${RULES.length} recommendation rules`);
 
   await disconnectDatabase();
   process.exit(0);

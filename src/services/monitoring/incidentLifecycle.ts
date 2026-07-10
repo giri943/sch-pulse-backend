@@ -92,9 +92,9 @@ async function escalateOverdueIncidents(): Promise<void> {
 
 /** Every 2 minutes — fine-grained enough for minute-based escalation thresholds. */
 export function startIncidentLifecycle(): ScheduledTask {
-  logger.info("Incident-lifecycle cron started (escalations, every 2 min)");
+  logger.info("Incident escalation watcher started - checking open incidents every 2 min");
   const task = cron.schedule("*/2 * * * *", () => {
-    runIncidentLifecycle().catch((err) => logger.error({ err }, "Incident-lifecycle pass failed"));
+    runIncidentLifecycle().catch((err) => logger.error({ err }, "Escalation check failed"));
   });
   return task;
 }

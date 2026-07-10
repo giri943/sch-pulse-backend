@@ -51,7 +51,7 @@ let lifecycleRunning = false;
 /** One lifecycle pass: expiry reminders, soft-delete on expiry, purge old soft-deletes. */
 export async function runLifecycle(): Promise<void> {
   if (lifecycleRunning) {
-    logger.warn("Lifecycle pass still running — skipping this tick");
+    logger.warn("Renewals & cleanup still running - skipping this run");
     return;
   }
   lifecycleRunning = true;
@@ -188,10 +188,10 @@ async function runLifecyclePass(): Promise<void> {
 
 /** Hourly lifecycle cron. Reminders dedupe per day so hourly runs are safe. */
 export function startLifecycle(): ScheduledTask {
-  logger.info("Lifecycle cron started (hourly)");
+  logger.info("Renewals & cleanup job started - hourly (SSL/domain expiry, monitoring periods, purge)");
   const task = cron.schedule("0 * * * *", () => {
-    runLifecycle().catch((err) => logger.error({ err }, "Lifecycle pass failed"));
+    runLifecycle().catch((err) => logger.error({ err }, "Renewals & cleanup pass failed"));
   });
-  runLifecycle().catch((err) => logger.error({ err }, "Initial lifecycle pass failed"));
+  runLifecycle().catch((err) => logger.error({ err }, "Renewals & cleanup pass failed"));
   return task;
 }
