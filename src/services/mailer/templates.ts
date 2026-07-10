@@ -221,6 +221,56 @@ export function incidentResolvedEmail(p: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Incident: you were @-mentioned in a note
+// ─────────────────────────────────────────────────────────────────────────────
+export function incidentMentionEmail(p: {
+  to: string[];
+  monitorName: string;
+  actorName: string;
+  incidentUrl?: string | null;
+  project?: string;
+}): EmailMessage {
+  const subject = `[Schbang Pulse] ${p.actorName} mentioned you — ${p.monitorName}`;
+  const intro = `<strong>${esc(p.actorName)}</strong> mentioned you in an incident note on <strong>${esc(p.monitorName)}</strong>. Open the incident to see the note and reply.`;
+  const rows: [string, string | null | undefined][] = [
+    ["Project", p.project],
+    ["Monitor", p.monitorName],
+    ["Mentioned by", p.actorName],
+  ];
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "info", eyebrow: "Incident · Mention", title: "You were mentioned", intro, bodyHtml: details(rows) + button("View incident", p.incidentUrl ?? null), footerNote: footerFor(p.monitorName) }),
+    text: textBlock(subject, [...rows, ["View", p.incidentUrl ?? ""]]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Incident: root-cause analysis still pending (24h reminder)
+// ─────────────────────────────────────────────────────────────────────────────
+export function rcaReminderEmail(p: {
+  to: string[];
+  monitorName: string;
+  resolvedAt: string;
+  incidentUrl?: string | null;
+  project?: string;
+}): EmailMessage {
+  const subject = `[Schbang Pulse] Root-cause pending — ${p.monitorName}`;
+  const intro = `The incident on <strong>${esc(p.monitorName)}</strong> (resolved ${esc(fmtWhen(p.resolvedAt))}) still has no root-cause analysis. Please add one so we capture what happened and how it was fixed.`;
+  const rows: [string, string | null | undefined][] = [
+    ["Project", p.project],
+    ["Monitor", p.monitorName],
+    ["Resolved at", fmtWhen(p.resolvedAt)],
+  ];
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "warn", eyebrow: "Incident · RCA pending", title: "Root-cause analysis pending", intro, bodyHtml: details(rows) + button("Add root-cause", p.incidentUrl ?? null), footerNote: footerFor(p.monitorName) }),
+    text: textBlock(subject, [...rows, ["Add root-cause", p.incidentUrl ?? ""]]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Monitor degraded (a check failed; rechecking shortly)
 // ─────────────────────────────────────────────────────────────────────────────
 export function monitorDegradedEmail(p: {
