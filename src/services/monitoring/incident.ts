@@ -11,6 +11,7 @@ import { getRecommendations } from "../recommendations";
 import { notifyChannels, pulseChat, chatMonitorLink } from "../channels";
 import { projectNameOf } from "../../utils/projectName";
 import { monitorChatMentions } from "../../utils/mentions";
+import { humanizeError } from "../../utils/humanizeError";
 import {
   formatDuration,
   incidentOpenedEmail,
@@ -111,6 +112,7 @@ async function sendDegradedAlert(monitor: MonitorWithId, result: CheckResult, no
         url: monitor.url,
         error: result.error ?? "Check failed",
         statusCode: result.statusCode,
+        server: result.server,
         timestamp: now.toISOString(),
         monitorId,
         project,
@@ -125,6 +127,7 @@ async function sendDegradedAlert(monitor: MonitorWithId, result: CheckResult, no
         mentions,
         rows: [
           ["URL", monitor.url],
+          ["What this means", humanizeError({ statusCode: result.statusCode, error: result.error, server: result.server })],
           ["Error", result.error ?? "Check failed"],
           ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
           ["Detected", now.toLocaleString("en-GB")],
@@ -209,7 +212,7 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
       monitorId: monitor._id,
       status: "open",
       startedAt: now,
-      trigger: { statusCode: result.statusCode, error: result.error, responseTimeMs: result.responseTimeMs },
+      trigger: { statusCode: result.statusCode, error: result.error, responseTimeMs: result.responseTimeMs, server: result.server },
       recommendations,
       notifiedDown: true,
     });
@@ -229,6 +232,7 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
           url: monitor.url,
           error: result.error ?? "Check failed",
           statusCode: result.statusCode,
+          server: result.server,
           timestamp: now.toISOString(),
           recommendations,
           monitorId,
@@ -244,6 +248,7 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
           mentions,
           rows: [
             ["URL", monitor.url],
+            ["What this means", humanizeError({ statusCode: result.statusCode, error: result.error, server: result.server })],
             ["Error", result.error ?? "Check failed"],
             ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
             ["Detected", now.toLocaleString("en-GB")],

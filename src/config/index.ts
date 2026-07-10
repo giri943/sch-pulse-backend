@@ -38,6 +38,9 @@ const envSchema = z.object({
 
   MAIL_DRIVER: z.enum(["smtp", "ses", "sendgrid", "mailjet", "brevo", "console"]).default("smtp"),
   MAIL_FROM: z.string().default("alerts@schbang.com"),
+  // Google Chat transport. "console" logs the payload instead of posting to the
+  // webhook — mirror of MAIL_DRIVER=console, for local testing without pinging a real space.
+  CHAT_DRIVER: z.enum(["google_chat", "console"]).default("google_chat"),
   SENDGRID_API_KEY: z.string().optional(),
   MAILJET_API_KEY: z.string().optional(),
   MAILJET_SECRET_KEY: z.string().optional(),
@@ -125,6 +128,7 @@ export const config = {
       pass: env.SMTP_PASS,
     },
   },
+  chat: { driver: env.CHAT_DRIVER },
   aws: { region: env.AWS_REGION, sesFrom: env.SES_FROM_EMAIL ?? env.MAIL_FROM },
   google: { clientId: env.GOOGLE_CLIENT_ID, allowedDomain: env.ALLOWED_EMAIL_DOMAIN },
   allowPrivateMonitorTargets: env.ALLOW_PRIVATE_MONITOR_TARGETS,
