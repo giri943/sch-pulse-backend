@@ -4,6 +4,7 @@ import { logger } from "../config/logger";
 // Register every model so mongoose.modelNames() sees them all.
 import "../models/auditLog.model";
 import "../models/check.model";
+import "../models/escalationPolicy.model";
 import "../models/incident.model";
 import "../models/monitor.model";
 import "../models/notificationChannel.model";

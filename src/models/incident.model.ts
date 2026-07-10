@@ -30,6 +30,8 @@ const incidentSchema = new Schema(
     acknowledgedBy: { type: Types.ObjectId, ref: "User", default: null },
     notifiedDown: { type: Boolean, default: false },
     notifiedResolved: { type: Boolean, default: false },
+    /** Escalation thresholds (minutes) already fired for this incident — dedupes re-escalation. */
+    escalationsSent: { type: [Number], default: [] },
   },
   { timestamps: true },
 );

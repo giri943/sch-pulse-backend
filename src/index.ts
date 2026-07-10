@@ -13,6 +13,7 @@ import { connectDatabase, disconnectDatabase } from "./config/database";
 import { createApp } from "./app";
 import { startMonitoring } from "./services/monitoring";
 import { startLifecycle } from "./services/monitoring/lifecycle";
+import { startIncidentLifecycle } from "./services/monitoring/incidentLifecycle";
 import { freePort } from "./utils/freePort";
 import { ensureSystemRoles, ensureSuperAdmins } from "./utils/systemRoles";
 import { ensureDefaultProject } from "./utils/ensureDefaultProject";
@@ -75,9 +76,11 @@ async function bootstrap(): Promise<void> {
   // double-check the same sites as production.
   let monitoringTask: ScheduledTask | null = null;
   let lifecycleTask: ScheduledTask | null = null;
+  let incidentLifecycleTask: ScheduledTask | null = null;
   if (config.scheduler.enabled) {
     monitoringTask = startMonitoring();
     lifecycleTask = startLifecycle();
+    incidentLifecycleTask = startIncidentLifecycle();
   } else {
     logger.warn("Scheduler disabled (SCHEDULER_ENABLED=false) — running API-only, no monitoring/lifecycle crons");
   }
@@ -89,6 +92,7 @@ async function bootstrap(): Promise<void> {
     logger.info(`${signal} received — shutting down`);
     monitoringTask?.stop();
     lifecycleTask?.stop();
+    incidentLifecycleTask?.stop();
     // Immediately drop keep-alive sockets (e.g. the dashboard's polling) so the
     // port is released right away — otherwise tsx watch's new process hits EADDRINUSE.
     server.closeAllConnections?.();
