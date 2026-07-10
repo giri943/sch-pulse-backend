@@ -12,6 +12,8 @@ export interface CheckResult {
   classification?: Classification;
   /** Firewall detected in front of the target, if any. */
   waf?: WafVendor | null;
+  /** The `Server` response header (e.g. nginx, cloudflare) — who returned the response. */
+  server?: string | null;
 }
 
 export type MonitorWithId = MonitorDoc & { _id: unknown };

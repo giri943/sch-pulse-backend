@@ -7,6 +7,7 @@ import { paginate, pageParams } from "../utils/response";
 import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
 import { accessibleMonitorIds, canWriteIncidentFor } from "../utils/access";
+import { humanizeError } from "../utils/humanizeError";
 
 /** Load the incident's monitor and 403 unless the user may write to it. */
 async function assertIncidentWritable(req: Request, monitorId: unknown) {
@@ -62,7 +63,10 @@ export async function getIncident(req: Request, res: Response): Promise<void> {
       throw ApiError.forbidden("You don't have access to this incident");
     }
   }
-  res.json(incident);
+  // Plain-language explanation of the failure for non-technical readers (additive;
+  // the raw trigger.statusCode/error are unchanged).
+  const humanized = humanizeError({ statusCode: incident.trigger?.statusCode, error: incident.trigger?.error, server: incident.trigger?.server });
+  res.json({ ...incident, humanized });
 }
 
 export async function updateIncident(req: Request, res: Response): Promise<void> {
