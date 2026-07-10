@@ -61,6 +61,14 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   ALLOWED_EMAIL_DOMAIN: z.string().default("schbang.com"),
 
+  // Email/password login is OFF by default — the app is Google-only, which
+  // removes the credential-stuffing/brute-force/reset-abuse surface. Set to
+  // "true" as a break-glass measure (e.g. a Google Workspace outage).
+  AUTH_PASSWORD_LOGIN_ENABLED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
+
   // SSRF guard: by default, monitor/SSL/domain probes refuse to connect to
   // private/loopback/link-local/metadata addresses. Set to "true" only if you
   // intentionally monitor internal hosts on a trusted network.
@@ -131,5 +139,6 @@ export const config = {
   chat: { driver: env.CHAT_DRIVER },
   aws: { region: env.AWS_REGION, sesFrom: env.SES_FROM_EMAIL ?? env.MAIL_FROM },
   google: { clientId: env.GOOGLE_CLIENT_ID, allowedDomain: env.ALLOWED_EMAIL_DOMAIN },
+  auth: { passwordLoginEnabled: env.AUTH_PASSWORD_LOGIN_ENABLED },
   allowPrivateMonitorTargets: env.ALLOW_PRIVATE_MONITOR_TARGETS,
 } as const;
