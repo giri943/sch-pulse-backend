@@ -60,7 +60,14 @@ export async function tick(): Promise<void> {
   ticking = true;
   try {
     const now = new Date();
-    const due = (await Monitor.find({ enabled: true, nextRunAt: { $lte: now } })
+    // Only "full" monitors get uptime health checks. SSL-only / Domain-only
+    // scopes are handled by the hourly lifecycle cron (expiry alerts only).
+    // ($nin also matches legacy monitors with no monitoringScope field = full.)
+    const due = (await Monitor.find({
+      enabled: true,
+      nextRunAt: { $lte: now },
+      monitoringScope: { $nin: ["ssl", "domain"] },
+    })
       .limit(500)
       .lean()) as MonitorWithId[];
     if (!due.length) return;
