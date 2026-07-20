@@ -4,6 +4,7 @@ import {
   HTTP_METHODS,
   MONITOR_INTERVALS_SEC,
   MONITOR_TYPES,
+  MONITORING_SCOPES,
 } from "../utils/constants";
 import { objectId } from "./common.validation";
 
@@ -22,6 +23,8 @@ const assertionSchema = z.object({
 const baseMonitor = z.object({
   name: z.string().trim().min(2).max(120),
   type: z.enum(MONITOR_TYPES),
+  /** What to monitor: full (uptime+SSL+domain), ssl-only, or domain-only. */
+  monitoringScope: z.enum(MONITORING_SCOPES).default("full"),
   url: z.string().url(),
   projectId: objectId,
   method: z.enum(HTTP_METHODS).default("GET"),

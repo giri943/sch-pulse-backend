@@ -11,6 +11,7 @@ import { parseSort, skip } from "../utils/query";
 import { writeAudit } from "../utils/audit";
 import { sendEmail, testNotificationEmail, monitorJoinedEmail } from "../services/mailer";
 import { notifyChannels, pulseChat, chatMonitorLink } from "../services/channels";
+import { refreshScopedMonitor } from "../services/monitoring/scopedProbe";
 import {
   assertCanCreateInProject,
   assertCanReadMonitor,
@@ -87,6 +88,9 @@ export async function createMonitor(req: Request, res: Response): Promise<void> 
     targetId: String(monitor._id),
     metadata: { name: monitor.name, url: monitor.url },
   });
+  // SSL-only / Domain-only monitors aren't on the uptime cron — probe their
+  // expiry now so the card isn't blank until the next hourly lifecycle pass.
+  if ((monitor.monitoringScope ?? "full") !== "full") await refreshScopedMonitor(monitor._id);
   res.status(201).json(monitor);
 }
 
@@ -313,8 +317,17 @@ export async function runMonitor(req: Request, res: Response): Promise<void> {
   if (!existing) throw ApiError.notFound("Monitor not found");
   await assertCanWriteMonitor(req.user!, existing, "run");
 
-  await Monitor.findByIdAndUpdate(req.params.id, { nextRunAt: new Date() });
+  const scope = (existing as { monitoringScope?: string }).monitoringScope ?? "full";
   await writeAudit(req, "monitor.run", { targetType: "monitor", targetId: req.params.id });
+
+  if (scope !== "full") {
+    // No uptime cron for these — probe the cert/domain on demand, right now.
+    await refreshScopedMonitor(req.params.id);
+    res.status(200).json({ message: scope === "ssl" ? "Certificate checked" : "Domain checked" });
+    return;
+  }
+
+  await Monitor.findByIdAndUpdate(req.params.id, { nextRunAt: new Date() });
   res.status(202).json({ message: "Check scheduled — will run on the next cron tick" });
 }
 

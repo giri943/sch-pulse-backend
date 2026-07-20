@@ -5,6 +5,7 @@ import {
   MONITOR_INTERVALS_SEC,
   MONITOR_STATUSES,
   MONITOR_TYPES,
+  MONITORING_SCOPES,
 } from "../utils/constants";
 
 const assertionSchema = new Schema(
@@ -20,6 +21,9 @@ const monitorSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
     type: { type: String, enum: MONITOR_TYPES, required: true },
+    // What this monitor watches. "full" (default) = uptime + SSL + domain.
+    // "ssl"/"domain" scopes skip uptime health checks entirely.
+    monitoringScope: { type: String, enum: MONITORING_SCOPES, default: "full" },
     url: { type: String, required: true },
     method: { type: String, enum: HTTP_METHODS, default: "GET" },
     timeoutMs: { type: Number, default: 10000 },

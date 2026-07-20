@@ -13,6 +13,9 @@ import { monitorChatMentions } from "../../utils/mentions";
 /** Short date like "12 Aug 2026". */
 const shortDate = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 import { probeDomainExpiry } from "./domainProbe";
+import { probeSslExpiry } from "./sslProbe";
+import { handleSslWarnings } from "./incident";
+import type { MonitorWithId } from "./types";
 import { DOMAIN_WARN_DAYS } from "../../utils/constants";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -33,6 +36,8 @@ interface LifecycleMonitor {
   domainExpiresAt?: Date | null;
   domainCheckedAt?: Date | null;
   domainWarnedThresholds?: number[];
+  monitoringScope?: "full" | "ssl" | "domain";
+  timeoutMs?: number;
 }
 
 async function recipients(m: LifecycleMonitor): Promise<string[]> {
@@ -114,8 +119,10 @@ async function runLifecyclePass(): Promise<void> {
   }
 
   // 2) Domain registration expiry — refresh ~daily via RDAP, warn at thresholds.
+  // Applies to Full + Domain-only monitors; SSL-only monitors don't track domain.
   const live = (await Monitor.find({ softDeletedAt: null, enabled: true }).lean()) as unknown as LifecycleMonitor[];
   for (const m of live) {
+    if (m.monitoringScope === "ssl") continue; // SSL-only: no domain monitoring
     let expiresAt = m.domainExpiresAt ? new Date(m.domainExpiresAt) : null;
     const stale =
       !m.domainCheckedAt || now.getTime() - new Date(m.domainCheckedAt).getTime() > DOMAIN_REFRESH_MS;
@@ -135,6 +142,11 @@ async function runLifecyclePass(): Promise<void> {
       }
     }
     if (!expiresAt) continue;
+
+    // Domain-only monitors run no uptime check — reflect domain health in status.
+    if (m.monitoringScope === "domain") {
+      await Monitor.updateOne({ _id: m._id }, { status: expiresAt.getTime() <= now.getTime() ? "down" : "operational" });
+    }
 
     const days = Math.ceil((expiresAt.getTime() - now.getTime()) / DAY);
     const warned = m.domainWarnedThresholds ?? [];
@@ -170,6 +182,19 @@ async function runLifecyclePass(): Promise<void> {
       );
       logger.info({ monitorId: String(m._id), days }, "Domain expiry warning sent");
     }
+  }
+
+  // 2b) SSL certificate expiry for SSL-only monitors. They run no uptime check,
+  // so probe the cert here and reuse the shared expiry-warning logic.
+  for (const m of live) {
+    if (m.monitoringScope !== "ssl") continue;
+    const expiry = await probeSslExpiry(m.url, m.timeoutMs ?? 10000);
+    if (!expiry) {
+      await Monitor.updateOne({ _id: m._id }, { status: "unknown" });
+      continue;
+    }
+    await handleSslWarnings(m as unknown as MonitorWithId, expiry, now);
+    await Monitor.updateOne({ _id: m._id }, { status: expiry.getTime() <= now.getTime() ? "down" : "operational" });
   }
 
   // 3) Permanently delete monitors soft-deleted more than PURGE_AFTER_DAYS ago (cascade).

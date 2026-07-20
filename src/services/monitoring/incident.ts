@@ -346,7 +346,7 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
   logger.info({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident resolved");
 }
 
-async function handleSslWarnings(monitor: MonitorWithId, expiresAt: Date, now: Date): Promise<void> {
+export async function handleSslWarnings(monitor: MonitorWithId, expiresAt: Date, now: Date): Promise<void> {
   const daysRemaining = Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
   const warned = new Set(monitor.sslWarnedThresholds ?? []);
   const due = [...SSL_WARN_DAYS].sort((a, b) => b - a).find((t) => daysRemaining <= t && !warned.has(t));
