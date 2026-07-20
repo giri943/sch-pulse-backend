@@ -51,16 +51,40 @@ export async function listProjects(req: Request, res: Response): Promise<void> {
     Project.countDocuments(filter),
   ]);
 
+  const projectIds = projects.map((p) => p._id);
+
   // One aggregation for counts + health, scoped to the page's projects.
   const counts = await Monitor.aggregate<{ _id: unknown; n: number; down: number }>([
-    { $match: { softDeletedAt: null, projectId: { $in: projects.map((p) => p._id) } } },
+    { $match: { softDeletedAt: null, projectId: { $in: projectIds } } },
     { $group: { _id: "$projectId", n: { $sum: 1 }, down: DOWN_COUNT } },
   ]);
   const map = new Map(counts.map((c) => [String(c._id), c]));
 
+  // Owners + members for the page's projects (one query, grouped in memory).
+  type Lite = { id: string; name: string; email: string; avatarUrl: string | null };
+  const memberRows = await ProjectMember.find({ projectId: { $in: projectIds } })
+    .populate("userId", "name email avatarUrl")
+    .lean();
+  const membersByProject = new Map<string, { owners: Lite[]; members: Lite[] }>();
+  for (const row of memberRows) {
+    const u = row.userId as unknown as { _id?: unknown; name?: string; email?: string; avatarUrl?: string | null } | null;
+    if (!u?._id) continue; // user was deleted
+    const lite: Lite = { id: String(u._id), name: u.name ?? "", email: u.email ?? "", avatarUrl: u.avatarUrl ?? null };
+    const pid = String(row.projectId);
+    const entry = membersByProject.get(pid) ?? { owners: [], members: [] };
+    entry.members.push(lite);
+    if (row.role === "owner") entry.owners.push(lite);
+    membersByProject.set(pid, entry);
+  }
+
   const data = projects.map((p) => {
     const c = map.get(String(p._id));
-    return serialize(p, c?.n ?? 0, c?.down ?? 0);
+    const mem = membersByProject.get(String(p._id));
+    return {
+      ...serialize(p, c?.n ?? 0, c?.down ?? 0),
+      owner: mem?.owners[0] ?? null, // primary owner
+      members: mem?.members ?? [],
+    };
   });
   res.json(paginate(data, total, page, limit));
 }
