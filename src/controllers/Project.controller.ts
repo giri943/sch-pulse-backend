@@ -11,6 +11,7 @@ import { skip } from "../utils/query";
 import { ProjectMember } from "../models/projectMember.model";
 import { ProjectJoinRequest } from "../models/projectJoinRequest.model";
 import { projectRole } from "../utils/projectAccess";
+import { accessibleProjectIds } from "../utils/access";
 
 const DOWN_COUNT = { $sum: { $cond: [{ $in: ["$status", ["down", "degraded"]] }, 1, 0] } };
 
@@ -30,13 +31,20 @@ const serialize = (
 export async function listProjects(req: Request, res: Response): Promise<void> {
   const { page, limit } = pageParams(req.query);
   const q = String((req.query.q as string) ?? "").trim();
-  const filter: Record<string, unknown> = {};
+  const and: Record<string, unknown>[] = [];
+
+  // Non-super-admins see only their own projects (+ system + projects with a
+  // monitor they can access). To join others they use "Find a project to join".
+  const allowedIds = await accessibleProjectIds(req.user!);
+  if (allowedIds !== null) and.push({ _id: { $in: allowedIds } });
+
   if (q) {
     const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     // Match the project name OR any project that contains a monitor whose url/name matches.
     const monitorProjectIds = await Monitor.find({ softDeletedAt: null, $or: [{ url: rx }, { name: rx }] }).distinct("projectId");
-    filter.$or = [{ name: rx }, { _id: { $in: monitorProjectIds } }];
+    and.push({ $or: [{ name: rx }, { _id: { $in: monitorProjectIds } }] });
   }
+  const filter: Record<string, unknown> = and.length ? { $and: and } : {};
 
   const [projects, total] = await Promise.all([
     Project.find(filter).sort({ isSystem: -1, name: 1 }).skip(skip(page, limit)).limit(limit).lean(),
@@ -60,6 +68,13 @@ export async function listProjects(req: Request, res: Response): Promise<void> {
 export async function getProject(req: Request, res: Response): Promise<void> {
   const project = await Project.findById(req.params.id).lean();
   if (!project) throw ApiError.notFound("Project not found");
+
+  // Non-super-admins can only open projects they have access to (own / system /
+  // one containing a monitor they can see). Don't leak existence otherwise.
+  const allowedIds = await accessibleProjectIds(req.user!);
+  if (allowedIds !== null && !allowedIds.some((pid) => String(pid) === String(project._id))) {
+    throw ApiError.notFound("Project not found");
+  }
   const [c] = await Monitor.aggregate<{ n: number; down: number }>([
     { $match: { softDeletedAt: null, projectId: project._id } },
     { $group: { _id: null, n: { $sum: 1 }, down: DOWN_COUNT } },
