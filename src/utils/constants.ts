@@ -4,6 +4,12 @@ export type UserStatus = (typeof USER_STATUSES)[number];
 export const MONITOR_TYPES = ["website", "api", "ssl"] as const;
 export type MonitorType = (typeof MONITOR_TYPES)[number];
 
+// What a monitor actively watches. "full" = uptime + SSL + domain (default,
+// backward-compatible). "ssl" = certificate expiry only. "domain" = domain
+// registration expiry only. SSL/domain scopes do no uptime health checks.
+export const MONITORING_SCOPES = ["full", "ssl", "domain"] as const;
+export type MonitoringScope = (typeof MONITORING_SCOPES)[number];
+
 export const HTTP_METHODS = ["GET", "POST", "HEAD", "PUT"] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
