@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import * as ProjectController from "../controllers/Project.controller";
 import * as Membership from "../controllers/ProjectMembership.controller";
+import * as DeployToken from "../controllers/DeployToken.controller";
 import { authenticate, requirePermission } from "../middlewares/auth";
 import { validate } from "../middlewares/validate";
 import { catchAsync } from "../utils/catchAsync";
@@ -35,6 +36,7 @@ router.delete("/join-requests/:id", validate({ params: idParamSchema }), catchAs
 router.get("/", canList, catchAsync(ProjectController.listProjects));
 router.post("/", requirePermission(P.PROJECT_CREATE), validate({ body: projectBody }), catchAsync(ProjectController.createProject));
 router.get("/:id", canList, validate({ params: idParamSchema }), catchAsync(ProjectController.getProject));
+router.get("/:id/mentionable", canList, validate({ params: idParamSchema }), catchAsync(ProjectController.getProjectMentionable));
 router.patch(
   "/:id",
   requirePermission(P.PROJECT_UPDATE),
@@ -52,5 +54,9 @@ router.get("/:id/members", validate({ params: idParamSchema }), catchAsync(Membe
 router.post("/:id/members", validate({ params: idParamSchema, body: addMemberBody }), catchAsync(Membership.addMember));
 router.patch("/:id/members/:userId", validate({ params: idParamSchema, body: roleBody }), catchAsync(Membership.updateMemberRole));
 router.delete("/:id/members/:userId", validate({ params: idParamSchema }), catchAsync(Membership.removeMember));
+
+// ─── deploy tokens (owner-managed; checks inside controller) ───
+router.get("/:id/deploy-tokens", validate({ params: idParamSchema }), catchAsync(DeployToken.listDeployTokens));
+router.post("/:id/deploy-tokens", validate({ params: idParamSchema, body: DeployToken.createDeployTokenSchema }), catchAsync(DeployToken.createDeployToken));
 
 export default router;

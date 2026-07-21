@@ -4,6 +4,7 @@ import { validate } from "../middlewares/validate";
 import { catchAsync } from "../utils/catchAsync";
 import * as Escalation from "../controllers/Escalation.controller";
 import * as RcaReminder from "../controllers/RcaReminder.controller";
+import * as Maintenance from "../controllers/Maintenance.controller";
 
 const router = Router();
 
@@ -23,6 +24,15 @@ router.put(
   authenticate,
   validate({ body: RcaReminder.rcaReminderUpdateSchema }),
   catchAsync(RcaReminder.updateRcaReminderPolicy),
+);
+
+// Org-wide maintenance defaults (super-admin only; enforced in the controller).
+router.get("/maintenance", authenticate, catchAsync(Maintenance.getMaintenancePolicy));
+router.put(
+  "/maintenance",
+  authenticate,
+  validate({ body: Maintenance.maintenancePolicyUpdateSchema }),
+  catchAsync(Maintenance.updateMaintenancePolicy),
 );
 
 export default router;

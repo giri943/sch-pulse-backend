@@ -12,6 +12,9 @@ import { accessibleMonitorIds, canWriteIncidentFor } from "../utils/access";
 import { humanizeError } from "../utils/humanizeError";
 import { sanitizeNoteHtml } from "../utils/sanitizeNotes";
 import { notifyIncidentMentions } from "../services/incidentMentions";
+import { keysFromHtml } from "../services/maintenanceCleanup";
+import { deleteObjects } from "../services/s3";
+import { publish } from "../services/realtime";
 
 /** Normalize a body value to a de-duplicated list of valid ObjectId strings. */
 function toObjectIdList(v: unknown): string[] {
@@ -144,6 +147,12 @@ export async function updateIncident(req: Request, res: Response): Promise<void>
     ...(incident.rootCauseMentions ?? []).map(String),
     ...(incident.resolutionMentions ?? []).map(String),
   ]);
+  // Image keys referenced before this edit — anything dropped from the SAVED
+  // notes gets cleaned from S3 below (safe: only on persisted removal).
+  const imageKeysBefore = new Set<string>([
+    ...keysFromHtml(incident.rootCauseNotes),
+    ...keysFromHtml(incident.resolutionNotes),
+  ]);
 
   // Notes are rich text (TipTap HTML) — sanitize before storing to prevent stored XSS.
   if (req.body.rootCauseNotes !== undefined) incident.rootCauseNotes = sanitizeNoteHtml(req.body.rootCauseNotes);
@@ -161,6 +170,12 @@ export async function updateIncident(req: Request, res: Response): Promise<void>
   await incident.save();
   await writeAudit(req, "incident.update", { targetType: "incident", targetId: req.params.id });
   res.json(incident);
+  publish("incidents", "monitors", "dashboard");
+
+  // Clean up images removed from the saved notes (fire-and-forget).
+  const imageKeysAfter = new Set<string>([...keysFromHtml(incident.rootCauseNotes), ...keysFromHtml(incident.resolutionNotes)]);
+  const removedKeys = [...imageKeysBefore].filter((k) => !imageKeysAfter.has(k));
+  if (removedKeys.length) void deleteObjects(removedKeys);
 
   // Notify newly-added mentions only (union of both note fields minus what was
   // already stored). Fire-and-forget after the response — never blocks the save.
@@ -200,4 +215,5 @@ export async function resolveIncident(req: Request, res: Response): Promise<void
   });
   await writeAudit(req, "incident.resolve", { targetType: "incident", targetId: req.params.id });
   res.json(incident);
+  publish("incidents", "monitors", "dashboard", "projects");
 }

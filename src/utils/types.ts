@@ -22,6 +22,8 @@ declare global {
     interface Request {
       user?: AuthUser;
       id?: string;
+      /** Set by the deploy-token middleware for CI/CD maintenance endpoints. */
+      deployToken?: { id: string; projectId: string };
     }
   }
 }
