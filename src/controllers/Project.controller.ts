@@ -12,6 +12,8 @@ import { ProjectMember } from "../models/projectMember.model";
 import { ProjectJoinRequest } from "../models/projectJoinRequest.model";
 import { projectRole } from "../utils/projectAccess";
 import { accessibleProjectIds } from "../utils/access";
+import { DeployToken } from "../models/deployToken.model";
+import { purgeMaintenanceFor } from "../services/maintenanceCleanup";
 
 const DOWN_COUNT = { $sum: { $cond: [{ $in: ["$status", ["down", "degraded"]] }, 1, 0] } };
 
@@ -89,6 +91,26 @@ export async function listProjects(req: Request, res: Response): Promise<void> {
   res.json(paginate(data, total, page, limit));
 }
 
+/**
+ * Users who may be @-mentioned in this project's maintenance notes: its members.
+ * Access is gated to people who can see the project. Optional ?q= narrows.
+ */
+export async function getProjectMentionable(req: Request, res: Response): Promise<void> {
+  const projectId = req.params.id;
+  const allowed = await accessibleProjectIds(req.user!);
+  if (allowed !== null && !allowed.some((p) => String(p) === projectId)) throw ApiError.forbidden("You don't have access to this project");
+
+  const q = String((req.query.q as string) ?? "").trim().toLowerCase();
+  const rows = await ProjectMember.find({ projectId }).populate("userId", "name email avatarUrl").lean();
+  const users = rows
+    .map((r) => r.userId as unknown as { _id?: unknown; name?: string; email?: string; avatarUrl?: string | null } | null)
+    .filter((u): u is NonNullable<typeof u> => !!u?._id)
+    .map((u) => ({ id: String(u._id), name: u.name ?? "", email: u.email ?? "", avatarUrl: u.avatarUrl ?? null }))
+    .filter((u) => !q || u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+    .slice(0, 10);
+  res.json(users);
+}
+
 export async function getProject(req: Request, res: Response): Promise<void> {
   const project = await Project.findById(req.params.id).lean();
   if (!project) throw ApiError.notFound("Project not found");
@@ -146,6 +168,9 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
     UptimeStat.deleteMany({ monitorId: { $in: monitorIds } }),
     ProjectMember.deleteMany({ projectId: project._id }),
     ProjectJoinRequest.deleteMany({ projectId: project._id }),
+    DeployToken.deleteMany({ projectId: project._id }),
+    // Maintenance windows (monitor- + project-scoped) and their S3 proof images.
+    purgeMaintenanceFor({ monitorIds, projectIds: [project._id] }),
   ]);
   await Monitor.deleteMany({ projectId: project._id });
   await project.deleteOne();

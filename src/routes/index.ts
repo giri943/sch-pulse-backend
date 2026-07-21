@@ -11,6 +11,10 @@ import dashboardRoutes from "./dashboard.routes";
 import analyticsRoutes from "./analytics.routes";
 import auditRoutes from "./audit.routes";
 import settingsRoutes from "./settings.routes";
+import maintenanceRoutes from "./maintenance.routes";
+import deployMaintenanceRoutes from "./deployMaintenance.routes";
+import deployTokenRoutes from "./deployToken.routes";
+import uploadRoutes from "./upload.routes";
 
 /** Mounts every feature router under /api/v1. */
 const router = Router();
@@ -27,5 +31,11 @@ router.use("/dashboard", dashboardRoutes);
 router.use("/analytics", analyticsRoutes);
 router.use("/audit-logs", auditRoutes);
 router.use("/settings", settingsRoutes);
+// Deploy-token maintenance must be registered BEFORE /maintenance so its
+// token-auth handler wins over the JWT-guarded router for /maintenance/deploy.
+router.use("/maintenance/deploy", deployMaintenanceRoutes);
+router.use("/maintenance", maintenanceRoutes);
+router.use("/deploy-tokens", deployTokenRoutes);
+router.use("/uploads", uploadRoutes);
 
 export default router;

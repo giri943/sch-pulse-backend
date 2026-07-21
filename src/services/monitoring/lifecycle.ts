@@ -15,6 +15,7 @@ const shortDate = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", m
 import { probeDomainExpiry } from "./domainProbe";
 import { probeSslExpiry } from "./sslProbe";
 import { handleSslWarnings } from "./incident";
+import { purgeMaintenanceFor, sweepOrphanProofs } from "../maintenanceCleanup";
 import type { MonitorWithId } from "./types";
 import { DOMAIN_WARN_DAYS } from "../../utils/constants";
 
@@ -205,10 +206,14 @@ async function runLifecyclePass(): Promise<void> {
       Check.deleteMany({ monitorId: m._id }),
       Incident.deleteMany({ monitorId: m._id }),
       UptimeStat.deleteMany({ monitorId: m._id }),
+      purgeMaintenanceFor({ monitorIds: [m._id] }),
     ]);
     await Monitor.deleteOne({ _id: m._id });
     logger.warn({ monitorId: String(m._id) }, "Monitor permanently deleted (purge)");
   }
+
+  // 4) Sweep orphaned proof images (uploaded to an editor that was never saved).
+  await sweepOrphanProofs();
 }
 
 /** Hourly lifecycle cron. Reminders dedupe per day so hourly runs are safe. */

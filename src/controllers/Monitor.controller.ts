@@ -12,6 +12,7 @@ import { writeAudit } from "../utils/audit";
 import { sendEmail, testNotificationEmail, monitorJoinedEmail } from "../services/mailer";
 import { notifyChannels, pulseChat, chatMonitorLink } from "../services/channels";
 import { refreshScopedMonitor } from "../services/monitoring/scopedProbe";
+import { purgeMaintenanceFor } from "../services/maintenanceCleanup";
 import {
   assertCanCreateInProject,
   assertCanReadMonitor,
@@ -263,11 +264,13 @@ export async function deleteMonitor(req: Request, res: Response): Promise<void> 
   if (!existing) throw ApiError.notFound("Monitor not found");
   await assertCanWriteMonitor(req.user!, existing, "delete");
 
-  // Cascade: remove the monitor's checks, incidents and stats too.
+  // Cascade: remove the monitor's checks, incidents, stats, and maintenance
+  // windows (incl. their uploaded proof images in S3).
   await Promise.all([
     Check.deleteMany({ monitorId: existing._id }),
     Incident.deleteMany({ monitorId: existing._id }),
     UptimeStat.deleteMany({ monitorId: existing._id }),
+    purgeMaintenanceFor({ monitorIds: [existing._id] }),
   ]);
   await Monitor.findByIdAndDelete(req.params.id);
   await writeAudit(req, "monitor.delete", { targetType: "monitor", targetId: req.params.id });

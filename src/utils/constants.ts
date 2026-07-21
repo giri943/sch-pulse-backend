@@ -13,7 +13,7 @@ export type MonitoringScope = (typeof MONITORING_SCOPES)[number];
 export const HTTP_METHODS = ["GET", "POST", "HEAD", "PUT"] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
-export const MONITOR_STATUSES = ["operational", "degraded", "down", "paused", "unknown"] as const;
+export const MONITOR_STATUSES = ["operational", "degraded", "down", "paused", "maintenance", "unknown"] as const;
 export type MonitorStatus = (typeof MONITOR_STATUSES)[number];
 
 /** Allowed monitoring intervals in seconds: 1/5/15/30 minutes. */

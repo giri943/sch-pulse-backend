@@ -13,6 +13,7 @@ import { notifyChannels, pulseChat, chatMonitorLink } from "../channels";
 import { projectNameOf } from "../../utils/projectName";
 import { monitorChatMentions } from "../../utils/mentions";
 import { humanizeError } from "../../utils/humanizeError";
+import { isUnderMaintenance } from "./maintenance";
 import {
   formatDuration,
   incidentOpenedEmail,
@@ -74,11 +75,20 @@ export async function processResult(monitor: MonitorWithId, result: CheckResult)
     classification: result.classification,
     waf: result.waf ?? null,
   });
-  await recordStat(monitor._id, result, now);
+
+  // Planned maintenance: keep the raw check above, but don't count it toward SLA
+  // and don't raise incidents/alerts — planned downtime shouldn't false-alarm.
+  const underMaintenance = await isUnderMaintenance(monitor._id, monitor.projectId);
+  if (!underMaintenance) await recordStat(monitor._id, result, now);
 
   // SSL expiry is auto-tracked for any monitor whose check captured a certificate.
   if (result.sslExpiresAt) {
     await handleSslWarnings(monitor, result.sslExpiresAt, now);
+  }
+
+  if (underMaintenance) {
+    await Monitor.updateOne({ _id: monitor._id }, { status: "maintenance", lastCheckedAt: now, ...wafPatch(result, now) });
+    return;
   }
 
   if (result.up) await handleRecovery(monitor, result, now);
