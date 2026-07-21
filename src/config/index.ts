@@ -56,6 +56,13 @@ const envSchema = z.object({
 
   AWS_REGION: z.string().default("ap-south-1"),
   SES_FROM_EMAIL: z.string().email().optional(),
+  // S3 for uploaded proof/attachments. Credentials come from the standard
+  // AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars (read by the SDK). If
+  // S3_BUCKET is unset, uploads are simply disabled (feature degrades cleanly).
+  S3_BUCKET: z.string().optional(),
+  // Optional CDN (e.g. CloudFront) in front of the bucket for READING files.
+  // When set, uploaded assets are served as `${CDN_URL}/${key}` (no signing).
+  CDN_URL: z.string().url().optional(),
 
   // Google sign-in (restricted to ALLOWED_EMAIL_DOMAIN)
   GOOGLE_CLIENT_ID: z.string().optional(),
@@ -138,7 +145,10 @@ export const config = {
   },
   chat: { driver: env.CHAT_DRIVER },
   aws: { region: env.AWS_REGION, sesFrom: env.SES_FROM_EMAIL ?? env.MAIL_FROM },
+  s3: { bucket: env.S3_BUCKET, cdnUrl: env.CDN_URL?.replace(/\/$/, "") },
   google: { clientId: env.GOOGLE_CLIENT_ID, allowedDomain: env.ALLOWED_EMAIL_DOMAIN },
-  auth: { passwordLoginEnabled: env.AUTH_PASSWORD_LOGIN_ENABLED },
+  // Password login: always on in dev (test any account without Google), plus the
+  // break-glass flag for prod. In prod it stays off unless explicitly enabled.
+  auth: { passwordLoginEnabled: env.AUTH_PASSWORD_LOGIN_ENABLED || env.NODE_ENV !== "production" },
   allowPrivateMonitorTargets: env.ALLOW_PRIVATE_MONITOR_TARGETS,
 } as const;

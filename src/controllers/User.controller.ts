@@ -16,6 +16,7 @@ import { config } from "../config";
 import { logger } from "../config/logger";
 import { sendEmail, userInviteEmail, projectOwnershipEmail } from "../services/mailer";
 import { emailDomainAllowed } from "../utils/emailDomain";
+import { publish } from "../services/realtime";
 
 /** Invite (set-password) link validity — longer than a normal reset so people have time. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -131,6 +132,8 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
   if (!user) throw ApiError.notFound("User not found");
   await writeAudit(req, "user.update", { targetType: "user", targetId: req.params.id });
   res.json(publicUser(user));
+  // A role change must reach the affected user instantly — clients refetch /me.
+  publish("users", "me", "projects");
 }
 
 export async function deleteUser(req: Request, res: Response): Promise<void> {

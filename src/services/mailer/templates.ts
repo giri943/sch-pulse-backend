@@ -246,6 +246,34 @@ export function incidentMentionEmail(p: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Maintenance: you were tagged on a scheduled maintenance window
+// ─────────────────────────────────────────────────────────────────────────────
+export function maintenanceMentionEmail(p: {
+  to: string[];
+  actorName: string;
+  targetName: string;
+  scope: "monitor" | "project";
+  startAt: string;
+  endAt: string;
+  note?: string;
+  link?: string | null;
+}): EmailMessage {
+  const subject = `[Schbang Pulse] Maintenance scheduled — ${p.targetName}`;
+  const intro = `<strong>${esc(p.actorName)}</strong> scheduled maintenance on <strong>${esc(p.targetName)}</strong> (${p.scope}) and tagged you. Alerts are suppressed for this window.`;
+  const rows: [string, string | null | undefined][] = [
+    ["Target", p.targetName],
+    ["Window", `${fmtWhen(p.startAt)} → ${fmtWhen(p.endAt)}`],
+    ...(p.note ? ([["Note", p.note]] as [string, string][]) : []),
+  ];
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "info", eyebrow: "Maintenance", title: "Maintenance scheduled", intro, bodyHtml: details(rows) + button("View", p.link ?? null), footerNote: footerFor(p.targetName) }),
+    text: textBlock(subject, [...rows, ["View", p.link ?? ""]]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Incident: root-cause analysis still pending (24h reminder)
 // ─────────────────────────────────────────────────────────────────────────────
 export function rcaReminderEmail(p: {

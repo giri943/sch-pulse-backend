@@ -12,6 +12,8 @@ import { writeAudit } from "../utils/audit";
 import { sendEmail, testNotificationEmail, monitorJoinedEmail } from "../services/mailer";
 import { notifyChannels, pulseChat, chatMonitorLink } from "../services/channels";
 import { refreshScopedMonitor } from "../services/monitoring/scopedProbe";
+import { purgeMaintenanceFor, purgeIncidentImagesFor } from "../services/maintenanceCleanup";
+import { publish } from "../services/realtime";
 import {
   assertCanCreateInProject,
   assertCanReadMonitor,
@@ -92,6 +94,7 @@ export async function createMonitor(req: Request, res: Response): Promise<void> 
   // expiry now so the card isn't blank until the next hourly lifecycle pass.
   if ((monitor.monitoringScope ?? "full") !== "full") await refreshScopedMonitor(monitor._id);
   res.status(201).json(monitor);
+  publish("monitors", "dashboard", "projects");
 }
 
 /**
@@ -256,6 +259,7 @@ export async function updateMonitor(req: Request, res: Response): Promise<void> 
     metadata: { changes: req.body },
   });
   res.json(monitor);
+  publish("monitors", "dashboard", "projects");
 }
 
 export async function deleteMonitor(req: Request, res: Response): Promise<void> {
@@ -263,15 +267,20 @@ export async function deleteMonitor(req: Request, res: Response): Promise<void> 
   if (!existing) throw ApiError.notFound("Monitor not found");
   await assertCanWriteMonitor(req.user!, existing, "delete");
 
-  // Cascade: remove the monitor's checks, incidents and stats too.
+  // Cascade: remove the monitor's checks, incidents, stats, and maintenance
+  // windows (incl. all uploaded images in S3). Collect incident-note images
+  // BEFORE deleting the incident docs.
+  await purgeIncidentImagesFor([existing._id]);
   await Promise.all([
     Check.deleteMany({ monitorId: existing._id }),
     Incident.deleteMany({ monitorId: existing._id }),
     UptimeStat.deleteMany({ monitorId: existing._id }),
+    purgeMaintenanceFor({ monitorIds: [existing._id] }),
   ]);
   await Monitor.findByIdAndDelete(req.params.id);
   await writeAudit(req, "monitor.delete", { targetType: "monitor", targetId: req.params.id });
   res.status(204).send();
+  publish("monitors", "dashboard", "projects");
 }
 
 /** Restore a soft-deleted (expired) monitor; clears the expiry so it won't re-expire. */
@@ -306,6 +315,7 @@ async function setEnabled(req: Request, res: Response, enabled: boolean, action:
   const monitor = await Monitor.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
   await writeAudit(req, action, { targetType: "monitor", targetId: req.params.id });
   res.json(monitor);
+  publish("monitors", "dashboard", "projects");
 }
 
 export const pauseMonitor = (req: Request, res: Response) => setEnabled(req, res, false, "monitor.pause");
@@ -324,6 +334,7 @@ export async function runMonitor(req: Request, res: Response): Promise<void> {
     // No uptime cron for these — probe the cert/domain on demand, right now.
     await refreshScopedMonitor(req.params.id);
     res.status(200).json({ message: scope === "ssl" ? "Certificate checked" : "Domain checked" });
+    publish("monitors", "dashboard", "projects");
     return;
   }
 

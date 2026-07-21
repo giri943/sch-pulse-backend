@@ -79,6 +79,32 @@ async function computeAccessibleMonitorIds(user: AuthUser): Promise<Types.Object
   return monitors.map((m) => m._id as Types.ObjectId);
 }
 
+/**
+ * Project ids the user may see, or null when unrestricted (read:all / super).
+ * For a Member: the projects they belong to + the system "General" project(s) +
+ * any project that contains a monitor they can access (created / tagged on).
+ * Mirrors accessibleMonitorIds so the projects list matches the dashboard/monitors.
+ */
+export async function accessibleProjectIds(user: AuthUser): Promise<Types.ObjectId[] | null> {
+  const scope = readScope(user.permissions, "monitor");
+  if (scope === "all") return null; // super-admin / read:all → every project
+  if (scope !== "own") return [];
+
+  const [memberIds, systemProjects, monitorIds] = await Promise.all([
+    memberProjectIds(user.id),
+    Project.find({ isSystem: true }).select("_id").lean(),
+    accessibleMonitorIds(user),
+  ]);
+  const set = new Set<string>();
+  memberIds.forEach((id) => set.add(String(id)));
+  systemProjects.forEach((p) => set.add(String(p._id)));
+  if (monitorIds?.length) {
+    const monitors = await Monitor.find({ _id: { $in: monitorIds } }).select("projectId").lean();
+    monitors.forEach((m) => m.projectId && set.add(String(m.projectId)));
+  }
+  return [...set].map((id) => new Types.ObjectId(id));
+}
+
 /** Throw 403 unless the user may read this monitor. */
 export async function assertCanReadMonitor(user: AuthUser, monitor: MonitorLike): Promise<void> {
   const scope = readScope(user.permissions, "monitor");

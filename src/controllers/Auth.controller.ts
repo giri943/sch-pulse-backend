@@ -56,6 +56,8 @@ function sendSession(
 }
 
 export async function login(req: Request, res: Response): Promise<void> {
+  // Password login is off in prod unless explicitly enabled (Google-only there).
+  if (!config.auth.passwordLoginEnabled) throw ApiError.forbidden("Password login is disabled — use Google sign-in");
   const { email, password } = req.body;
   // Org-only app — block any off-domain account (defence even if one slipped in).
   if (!emailDomainAllowed(email))
@@ -174,10 +176,16 @@ export async function logout(req: Request, res: Response): Promise<void> {
  * break-glass flag is on, the login/reset pages re-render the password forms.
  */
 export async function authConfig(_req: Request, res: Response): Promise<void> {
-  res.json({ passwordLoginEnabled: config.auth.passwordLoginEnabled });
+  res.json({
+    passwordLoginEnabled: config.auth.passwordLoginEnabled,
+    // Prod enforces the org domain; dev allows any email for testing.
+    emailDomainEnforced: config.isProd,
+    allowedDomain: config.google.allowedDomain,
+  });
 }
 
 export async function forgotPassword(req: Request, res: Response): Promise<void> {
+  if (!config.auth.passwordLoginEnabled) throw ApiError.forbidden("Password login is disabled");
   const user = await User.findOne({ email: req.body.email });
   if (user) {
     const rawToken = randomBytes(32).toString("hex");
@@ -197,6 +205,7 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
 }
 
 export async function resetPassword(req: Request, res: Response): Promise<void> {
+  if (!config.auth.passwordLoginEnabled) throw ApiError.forbidden("Password login is disabled");
   const hashed = createHash("sha256").update(req.body.token).digest("hex");
   const user = await User.findOne({
     resetPasswordToken: hashed,
