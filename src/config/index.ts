@@ -147,6 +147,8 @@ export const config = {
   aws: { region: env.AWS_REGION, sesFrom: env.SES_FROM_EMAIL ?? env.MAIL_FROM },
   s3: { bucket: env.S3_BUCKET, cdnUrl: env.CDN_URL?.replace(/\/$/, "") },
   google: { clientId: env.GOOGLE_CLIENT_ID, allowedDomain: env.ALLOWED_EMAIL_DOMAIN },
-  auth: { passwordLoginEnabled: env.AUTH_PASSWORD_LOGIN_ENABLED },
+  // Password login: always on in dev (test any account without Google), plus the
+  // break-glass flag for prod. In prod it stays off unless explicitly enabled.
+  auth: { passwordLoginEnabled: env.AUTH_PASSWORD_LOGIN_ENABLED || env.NODE_ENV !== "production" },
   allowPrivateMonitorTargets: env.ALLOW_PRIVATE_MONITOR_TARGETS,
 } as const;

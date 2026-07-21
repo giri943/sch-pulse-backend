@@ -14,6 +14,7 @@ import { projectNameOf } from "../../utils/projectName";
 import { monitorChatMentions } from "../../utils/mentions";
 import { humanizeError } from "../../utils/humanizeError";
 import { isUnderMaintenance } from "./maintenance";
+import { publish } from "../realtime";
 import {
   formatDuration,
   incidentOpenedEmail,
@@ -269,6 +270,7 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
       ),
     ]);
     logger.warn({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident opened");
+    publish("monitors", "incidents", "dashboard", "projects");
   } catch (err) {
     if ((err as { code?: number }).code !== 11000) throw err; // ignore duplicate open incident
   }
@@ -354,6 +356,7 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
     ),
   ]);
   logger.info({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident resolved");
+  publish("monitors", "incidents", "dashboard", "projects");
 }
 
 export async function handleSslWarnings(monitor: MonitorWithId, expiresAt: Date, now: Date): Promise<void> {

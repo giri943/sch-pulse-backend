@@ -42,6 +42,14 @@ export async function purgeMaintenanceFor(opts: { monitorIds?: unknown[]; projec
   await MaintenanceWindow.deleteMany({ $or: or });
 }
 
+/** Delete S3 images referenced by the incident notes of the given monitors. */
+export async function purgeIncidentImagesFor(monitorIds: unknown[]): Promise<void> {
+  if (!monitorIds.length) return;
+  const incidents = await Incident.find({ monitorId: { $in: monitorIds } }).select("rootCauseNotes resolutionNotes").lean();
+  const keys = [...new Set(incidents.flatMap((i) => [...keysFromHtml(i.rootCauseNotes), ...keysFromHtml(i.resolutionNotes)]))];
+  await deleteObjects(keys);
+}
+
 // Grace period so a freshly-uploaded image (form still open, not yet saved)
 // is never swept mid-edit.
 const ORPHAN_MIN_AGE_MS = 6 * 60 * 60 * 1000;

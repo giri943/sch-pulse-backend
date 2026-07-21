@@ -12,6 +12,7 @@ import { invalidateMaintenanceCache } from "../services/monitoring/maintenance";
 import { uploadsEnabled, viewUrlFor } from "../services/s3";
 import { sanitizeNoteHtml } from "../utils/sanitizeNotes";
 import { notifyMaintenanceMentions } from "../services/maintenanceNotify";
+import { publish } from "../services/realtime";
 import type { MaintenanceWindowDoc } from "../models/maintenanceWindow.model";
 
 const GLOBAL = "global";
@@ -87,6 +88,7 @@ export async function createMaintenance(req: Request, res: Response): Promise<vo
   invalidateMaintenanceCache(); // take effect on the next check
   await writeAudit(req, "maintenance.create", { targetType: "maintenance", targetId: String(win._id), metadata: { scope: body.scope } });
   res.status(201).json(await serializeWindow(win.toObject()));
+  publish("maintenance", "monitors", "dashboard");
 
   // Notify tagged users (fire-and-forget, after the response).
   if (reasonMentions.length) {
@@ -139,6 +141,7 @@ export async function cancelMaintenance(req: Request, res: Response): Promise<vo
   }
   await writeAudit(req, "maintenance.cancel", { targetType: "maintenance", targetId: String(win._id) });
   res.json(win);
+  publish("maintenance", "monitors", "dashboard");
 }
 
 // ── Default-duration policy (super-admin) ────────────────────────────────────
@@ -202,6 +205,7 @@ export async function startDeployMaintenance(req: Request, res: Response): Promi
   });
   invalidateMaintenanceCache();
   res.status(201).json({ id: String(win._id), scope, startAt, endAt });
+  publish("maintenance", "monitors", "dashboard");
 }
 
 export async function endDeployMaintenance(req: Request, res: Response): Promise<void> {
@@ -219,4 +223,5 @@ export async function endDeployMaintenance(req: Request, res: Response): Promise
   );
   invalidateMaintenanceCache();
   res.json({ ended: result.modifiedCount ?? 0 });
+  publish("maintenance", "monitors", "dashboard");
 }

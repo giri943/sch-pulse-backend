@@ -13,7 +13,8 @@ import { ProjectJoinRequest } from "../models/projectJoinRequest.model";
 import { projectRole } from "../utils/projectAccess";
 import { accessibleProjectIds } from "../utils/access";
 import { DeployToken } from "../models/deployToken.model";
-import { purgeMaintenanceFor } from "../services/maintenanceCleanup";
+import { purgeMaintenanceFor, purgeIncidentImagesFor } from "../services/maintenanceCleanup";
+import { publish } from "../services/realtime";
 
 const DOWN_COUNT = { $sum: { $cond: [{ $in: ["$status", ["down", "degraded"]] }, 1, 0] } };
 
@@ -137,6 +138,7 @@ export async function createProject(req: Request, res: Response): Promise<void> 
   await ProjectMember.create({ projectId: project._id, userId: req.user!.id, role: "owner" });
   await writeAudit(req, "project.create", { targetType: "project", targetId: project.id });
   res.status(201).json(serialize(project));
+  publish("projects", "dashboard");
 }
 
 export async function updateProject(req: Request, res: Response): Promise<void> {
@@ -152,6 +154,7 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
   await project.save();
   await writeAudit(req, "project.update", { targetType: "project", targetId: project.id });
   res.json(serialize(project));
+  publish("projects", "dashboard");
 }
 
 export async function deleteProject(req: Request, res: Response): Promise<void> {
@@ -162,6 +165,7 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
   // Deleting a project deletes its monitors and all their data (checks,
   // incidents, uptime stats), plus its memberships and join requests.
   const monitorIds = (await Monitor.find({ projectId: project._id }).select("_id").lean()).map((m) => m._id);
+  await purgeIncidentImagesFor(monitorIds); // delete incident-note images before removing the docs
   await Promise.all([
     Check.deleteMany({ monitorId: { $in: monitorIds } }),
     Incident.deleteMany({ monitorId: { $in: monitorIds } }),
@@ -176,4 +180,5 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
   await project.deleteOne();
   await writeAudit(req, "project.delete", { targetType: "project", targetId: project.id, metadata: { monitorsDeleted: monitorIds.length } });
   res.status(204).send();
+  publish("projects", "dashboard", "monitors");
 }
