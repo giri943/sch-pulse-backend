@@ -5,6 +5,7 @@ import { config } from "../config";
 import { sendEmail, incidentMentionEmail } from "./mailer";
 import { notifyChannels, chatMonitorLink } from "./channels";
 import { projectNameOf } from "../utils/projectName";
+import { createNotifications } from "./notify";
 
 /**
  * Notify newly @-mentioned users on an incident note, Jira-style: an email +
@@ -53,6 +54,12 @@ export async function notifyIncidentMentions(opts: {
         : Promise.resolve(),
       chatMentions ? notifyChannels(monitor.channels as unknown[] | undefined, { text: chatText }) : Promise.resolve(),
     ]);
+    await createNotifications(targets, {
+      type: "mention",
+      title: `${opts.actorName} mentioned you`,
+      body: `In an incident note on ${monitor.name}`,
+      link: `/monitors/${monitorId}?tab=incidents&incident=${opts.incidentId}`,
+    });
     logger.info({ incidentId: opts.incidentId, count: targets.length }, "Notified newly-mentioned users on incident note");
   } catch (err) {
     logger.error({ err }, "Failed to notify incident mentions");

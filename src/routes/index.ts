@@ -16,6 +16,7 @@ import deployMaintenanceRoutes from "./deployMaintenance.routes";
 import deployTokenRoutes from "./deployToken.routes";
 import uploadRoutes from "./upload.routes";
 import eventsRoutes from "./events.routes";
+import notificationRoutes from "./notification.routes";
 
 /** Mounts every feature router under /api/v1. */
 const router = Router();
@@ -39,5 +40,6 @@ router.use("/maintenance", maintenanceRoutes);
 router.use("/deploy-tokens", deployTokenRoutes);
 router.use("/uploads", uploadRoutes);
 router.use("/events", eventsRoutes);
+router.use("/notifications", notificationRoutes);
 
 export default router;
