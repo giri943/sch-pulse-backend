@@ -10,7 +10,7 @@ import { logger } from "../config/logger";
  * NOTE: this broadcasts only within one Node process. If the backend is ever
  * scaled to multiple instances, put a Redis pub/sub in front of publish().
  */
-type EventType = "monitors" | "incidents" | "projects" | "maintenance" | "users" | "me" | "dashboard";
+type EventType = "monitors" | "incidents" | "projects" | "maintenance" | "users" | "me" | "dashboard" | "notifications";
 
 const clients = new Set<Response>();
 

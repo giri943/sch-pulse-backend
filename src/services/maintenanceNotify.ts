@@ -4,6 +4,7 @@ import { logger } from "../config/logger";
 import { sendEmail, maintenanceMentionEmail } from "./mailer";
 import { notifyChannels, chatMonitorLink } from "./channels";
 import { projectNameOf } from "../utils/projectName";
+import { createNotifications } from "./notify";
 
 /**
  * Notify users @-tagged in a maintenance window's note (email + Google Chat for
@@ -59,6 +60,12 @@ export async function notifyMaintenanceMentions(opts: {
       }
     }
     await Promise.allSettled(tasks);
+    await createNotifications(targets, {
+      type: "mention",
+      title: `${opts.actorName} tagged you in maintenance`,
+      body: `On ${targetName}`,
+      link: monitorId ? `/monitors/${monitorId}?tab=maintenance` : "/projects",
+    });
     logger.info({ count: targets.length }, "Notified users tagged on maintenance window");
   } catch (err) {
     logger.error({ err }, "Failed to notify maintenance mentions");

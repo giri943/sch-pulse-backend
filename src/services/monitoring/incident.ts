@@ -15,6 +15,10 @@ import { monitorChatMentions } from "../../utils/mentions";
 import { humanizeError } from "../../utils/humanizeError";
 import { isUnderMaintenance } from "./maintenance";
 import { publish } from "../realtime";
+import { createNotifications } from "../notify";
+
+/** Users to notify about a monitor (its tagged members + creator). */
+const monitorAudience = (m: { members?: unknown[]; createdBy?: unknown }): unknown[] => [...(m.members ?? []), ...(m.createdBy ? [m.createdBy] : [])];
 import {
   formatDuration,
   incidentOpenedEmail,
@@ -271,6 +275,12 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
     ]);
     logger.warn({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident opened");
     publish("monitors", "incidents", "dashboard", "projects");
+    void createNotifications(monitorAudience(monitor), {
+      type: "incident",
+      title: `${monitor.name} is down`,
+      body: humanizeError({ statusCode: result.statusCode, error: result.error, server: result.server }),
+      link: `/monitors/${String(monitor._id)}?tab=incidents&incident=${String(incident._id)}`,
+    });
   } catch (err) {
     if ((err as { code?: number }).code !== 11000) throw err; // ignore duplicate open incident
   }
@@ -357,6 +367,12 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
   ]);
   logger.info({ monitorId: String(monitor._id), incidentId: String(incident._id) }, "Incident resolved");
   publish("monitors", "incidents", "dashboard", "projects");
+  void createNotifications(monitorAudience(monitor), {
+    type: "incident",
+    title: `${monitor.name} recovered`,
+    body: "The monitor is back to operational.",
+    link: `/monitors/${String(monitor._id)}`,
+  });
 }
 
 export async function handleSslWarnings(monitor: MonitorWithId, expiresAt: Date, now: Date): Promise<void> {
@@ -395,5 +411,11 @@ export async function handleSslWarnings(monitor: MonitorWithId, expiresAt: Date,
       button: { text: "View monitor", url: chatMonitorLink(monitorId) },
     }),
   );
+  void createNotifications(monitorAudience(monitor), {
+    type: "expiry",
+    title: `SSL expiring on ${monitor.name}`,
+    body: `Certificate expires in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}.`,
+    link: `/monitors/${monitorId}?tab=ssl`,
+  });
   logger.warn({ monitorId: String(monitor._id), daysRemaining, threshold: due }, "SSL warning sent");
 }
