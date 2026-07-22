@@ -16,6 +16,7 @@ import { probeDomainExpiry } from "./domainProbe";
 import { probeSslExpiry } from "./sslProbe";
 import { handleSslWarnings } from "./incident";
 import { purgeMaintenanceFor, purgeIncidentImagesFor, sweepOrphanProofs } from "../maintenanceCleanup";
+import { createNotifications } from "../notify";
 import type { MonitorWithId } from "./types";
 import { DOMAIN_WARN_DAYS } from "../../utils/constants";
 
@@ -181,6 +182,12 @@ async function runLifecyclePass(): Promise<void> {
           button: { text: "View monitor", url: chatMonitorLink(monitorId) },
         }),
       );
+      void createNotifications(m.members ?? [], {
+        type: "expiry",
+        title: `Domain expiring on ${m.name}`,
+        body: `Registration expires in ${days} day${days === 1 ? "" : "s"}.`,
+        link: `/monitors/${monitorId}?tab=ssl`,
+      });
       logger.info({ monitorId: String(m._id), days }, "Domain expiry warning sent");
     }
   }

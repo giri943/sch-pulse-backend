@@ -13,6 +13,8 @@ import { uploadsEnabled, viewUrlFor } from "../services/s3";
 import { sanitizeNoteHtml } from "../utils/sanitizeNotes";
 import { notifyMaintenanceMentions } from "../services/maintenanceNotify";
 import { publish } from "../services/realtime";
+import { createNotifications } from "../services/notify";
+import { ProjectMember } from "../models/projectMember.model";
 import type { MaintenanceWindowDoc } from "../models/maintenanceWindow.model";
 
 const GLOBAL = "global";
@@ -89,6 +91,27 @@ export async function createMaintenance(req: Request, res: Response): Promise<vo
   await writeAudit(req, "maintenance.create", { targetType: "maintenance", targetId: String(win._id), metadata: { scope: body.scope } });
   res.status(201).json(await serializeWindow(win.toObject()));
   publish("maintenance", "monitors", "dashboard");
+
+  // Notify the target's audience that maintenance was scheduled (beyond @-mentions).
+  void (async () => {
+    let audience: unknown[] = [];
+    let name = "a project";
+    if (body.scope === "monitor" && body.monitorId) {
+      const m = await Monitor.findById(body.monitorId).select("name members createdBy").lean();
+      if (m) {
+        name = m.name;
+        audience = [...((m.members as unknown[]) ?? []), ...(m.createdBy ? [m.createdBy] : [])];
+      }
+    } else if (body.projectId) {
+      const members = await ProjectMember.find({ projectId: body.projectId }).distinct("userId");
+      audience = members;
+    }
+    await createNotifications(
+      audience,
+      { type: "maintenance", title: `Maintenance scheduled on ${name}`, body: `${startAt.toLocaleString()} → ${endAt!.toLocaleString()}`, link: body.monitorId ? `/monitors/${body.monitorId}?tab=maintenance` : "/projects" },
+      { excludeUserId: req.user!.id },
+    );
+  })();
 
   // Notify tagged users (fire-and-forget, after the response).
   if (reasonMentions.length) {

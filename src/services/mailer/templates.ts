@@ -522,6 +522,27 @@ export function projectJoinDecisionEmail(p: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Project: you were added directly (not via a join request)
+// ─────────────────────────────────────────────────────────────────────────────
+export function projectAddedEmail(p: {
+  to: string[];
+  projectName: string;
+  adderName: string;
+  role?: string;
+  projectId?: string;
+}): EmailMessage {
+  const subject = `[Schbang Pulse] You've been added to ${p.projectName}`;
+  const link = config.appBaseUrl ? `${config.appBaseUrl}/projects/${p.projectId ?? ""}` : null;
+  const intro = `<strong>${esc(p.adderName)}</strong> added you to <strong>${esc(p.projectName)}</strong> as <strong>${esc(p.role ?? "member")}</strong>. Its monitors now appear on your dashboard.`;
+  return {
+    to: p.to,
+    subject,
+    html: shell({ accent: "up", eyebrow: "Added to a project", title: `You're in ${p.projectName}`, intro, bodyHtml: button("Open project", link) }),
+    text: textBlock(subject, [["Project", p.projectName], ["Role", p.role ?? "member"], ["Added by", p.adderName], ["Open", link]]),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Monitor: someone joined
 // ─────────────────────────────────────────────────────────────────────────────
 export function monitorJoinedEmail(p: { to: string[]; monitorName: string; url: string; joinerName: string; monitorId?: string }): EmailMessage {

@@ -7,7 +7,9 @@ import { User } from "../models/user.model";
 import { ApiError } from "../utils/ApiError";
 import { writeAudit } from "../utils/audit";
 import { assertProjectOwner, projectRole } from "../utils/projectAccess";
-import { sendEmail, projectJoinRequestEmail, projectJoinDecisionEmail } from "../services/mailer";
+import { sendEmail, projectJoinRequestEmail, projectJoinDecisionEmail, projectAddedEmail } from "../services/mailer";
+import { publish } from "../services/realtime";
+import { createNotifications } from "../services/notify";
 
 /** Emails of a project's owners (to notify on requests). */
 async function ownerEmails(projectId: Types.ObjectId | string): Promise<string[]> {
@@ -83,6 +85,7 @@ export async function requestToJoin(req: Request, res: Response): Promise<void> 
     );
   }
   res.status(201).json({ id: reqDoc.id, status: reqDoc.status });
+  publish("projects"); // owners see the new request live
 }
 
 /** Owner: pending requests for a project. */
@@ -141,7 +144,9 @@ export async function acceptRequest(req: Request, res: Response): Promise<void> 
   if (to.length && project) {
     void sendEmail(projectJoinDecisionEmail({ to, projectName: project.name, accepted: true, deciderName: req.user!.name, role }));
   }
+  void createNotifications([reqDoc.userId], { type: "project", title: `Your request to join ${project?.name ?? "a project"} was approved`, body: `Role: ${role}`, link: `/projects/${String(reqDoc.projectId)}` });
   res.json({ id: reqDoc.id, status: reqDoc.status, role });
+  publish("projects", "dashboard", "monitors", "me");
 }
 
 export async function rejectRequest(req: Request, res: Response): Promise<void> {
@@ -161,6 +166,7 @@ export async function rejectRequest(req: Request, res: Response): Promise<void> 
     void sendEmail(projectJoinDecisionEmail({ to, projectName: project.name, accepted: false, deciderName: req.user!.name }));
   }
   res.json({ id: reqDoc.id, status: reqDoc.status });
+  publish("projects");
 }
 
 /** Requester cancels their own pending request. */
@@ -208,9 +214,12 @@ export async function addMember(req: Request, res: Response): Promise<void> {
   await writeAudit(req, "project.member_add", { targetType: "project", targetId: req.params.id });
   const to = await userEmail(userId);
   if (to.length) {
-    void sendEmail(projectJoinDecisionEmail({ to, projectName: project.name, accepted: true, deciderName: req.user!.name, role }));
+    // They were *added* (not a request approval) — use the right wording.
+    void sendEmail(projectAddedEmail({ to, projectName: project.name, adderName: req.user!.name, role, projectId: req.params.id }));
   }
+  void createNotifications([userId], { type: "project", title: `You were added to ${project.name}`, body: `Role: ${role}`, link: `/projects/${req.params.id}` });
   res.status(201).json({ ok: true });
+  publish("projects", "dashboard", "monitors", "me");
 }
 
 export async function updateMemberRole(req: Request, res: Response): Promise<void> {
@@ -227,7 +236,10 @@ export async function updateMemberRole(req: Request, res: Response): Promise<voi
   member.role = role;
   await member.save();
   await writeAudit(req, "project.member_role", { targetType: "project", targetId: req.params.id });
+  const proj = await Project.findById(req.params.id).select("name").lean();
+  void createNotifications([req.params.userId], { type: "project", title: `Your role changed in ${proj?.name ?? "a project"}`, body: `You're now ${role}`, link: `/projects/${req.params.id}` });
   res.json({ ok: true, role });
+  publish("projects", "dashboard", "monitors", "me");
 }
 
 export async function removeMember(req: Request, res: Response): Promise<void> {
@@ -240,5 +252,8 @@ export async function removeMember(req: Request, res: Response): Promise<void> {
   }
   await member.deleteOne();
   await writeAudit(req, "project.member_remove", { targetType: "project", targetId: req.params.id });
+  const removedFrom = await Project.findById(req.params.id).select("name").lean();
+  void createNotifications([req.params.userId], { type: "project", title: `You were removed from ${removedFrom?.name ?? "a project"}`, link: `/projects` });
   res.status(204).send();
+  publish("projects", "dashboard", "monitors", "me");
 }
