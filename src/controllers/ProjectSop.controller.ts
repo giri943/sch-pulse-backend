@@ -77,7 +77,8 @@ const bottomLimit = (doc: Doc) => doc.page.height - 46; // keep clear of the foo
 function drawBrandHeader(doc: Doc, opts: { clientName: string; subtitle: string; meta: string[] }): void {
   const left = doc.page.margins.left;
   const top = doc.page.margins.top;
-  const logo = 38; // square logo box
+  const logo = 52; // square logo box — deliberately larger than the wordmark
+  const gapAfterLogo = 5; // tight spacing between the # mark and "Schbang"
 
   let hasLogo = false;
   const logoPath = resolveLogoPath();
@@ -92,18 +93,18 @@ function drawBrandHeader(doc: Doc, opts: { clientName: string; subtitle: string;
     logger.warn({ cwd: process.cwd() }, "PDF logo not found (assets/schbang-logo.png) — using drawn fallback");
   }
   if (!hasLogo) {
-    // Fallback: a small drawn puzzle mark so the header still reads as branded.
-    const s = 8, gap = 2;
+    // Fallback: a drawn puzzle mark sized to the logo box so the header still reads as branded.
+    const s = (logo - 3) / 2, gap = 3;
     const tiles = ["#38bdf8", "#ef4444", "#8b5cf6", "#22c55e"];
     [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(([cx, cy], i) => {
-      doc.roundedRect(left + cx * (s + gap), top + cy * (s + gap), s, s, 2).fill(tiles[i]);
+      doc.roundedRect(left + cx * (s + gap), top + cy * (s + gap), s, s, 3).fill(tiles[i]);
     });
   }
 
-  // "Schbang" wordmark, vertically centered against the logo box.
-  doc.font("Helvetica-Bold").fontSize(23);
+  // "Schbang" wordmark — a touch smaller than the mark, vertically centered against it.
+  doc.font("Helvetica-Bold").fontSize(24);
   const wordY = top + (logo - doc.currentLineHeight()) / 2;
-  doc.fillColor(PDF.ink).text("Schbang", left + logo + 12, wordY);
+  doc.fillColor(PDF.ink).text("Schbang", left + logo + gapAfterLogo, wordY);
 
   let y = top + logo + 14;
   doc.fillColor(PDF.ink).font("Helvetica-Bold").fontSize(20).text(opts.clientName, left, y);
