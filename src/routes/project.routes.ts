@@ -3,6 +3,7 @@ import { z } from "zod";
 import * as ProjectController from "../controllers/Project.controller";
 import * as Membership from "../controllers/ProjectMembership.controller";
 import * as DeployToken from "../controllers/DeployToken.controller";
+import * as ProjectSop from "../controllers/ProjectSop.controller";
 import { authenticate, requirePermission } from "../middlewares/auth";
 import { validate } from "../middlewares/validate";
 import { catchAsync } from "../utils/catchAsync";
@@ -54,6 +55,17 @@ router.get("/:id/members", validate({ params: idParamSchema }), catchAsync(Membe
 router.post("/:id/members", validate({ params: idParamSchema, body: addMemberBody }), catchAsync(Membership.addMember));
 router.patch("/:id/members/:userId", validate({ params: idParamSchema, body: roleBody }), catchAsync(Membership.updateMemberRole));
 router.delete("/:id/members/:userId", validate({ params: idParamSchema }), catchAsync(Membership.removeMember));
+
+// ─── service log / SOP plan (checks inside controller) ───
+router.get("/:id/service-log", validate({ params: idParamSchema }), catchAsync(ProjectSop.getServiceLog));
+router.put("/:id/service-log", validate({ params: idParamSchema, body: ProjectSop.planSchema }), catchAsync(ProjectSop.updatePlan));
+router.get("/:id/service-log/history", validate({ params: idParamSchema }), catchAsync(ProjectSop.getServiceLogHistory));
+router.get("/:id/service-log/report", validate({ params: idParamSchema }), catchAsync(ProjectSop.downloadServiceLogReport));
+router.post("/:id/sops", validate({ params: idParamSchema, body: ProjectSop.attachSopSchema }), catchAsync(ProjectSop.attachSop));
+router.patch("/:id/sops/:sopId", validate({ body: ProjectSop.updateProjectSopSchema }), catchAsync(ProjectSop.updateProjectSop));
+router.delete("/:id/sops/:sopId", catchAsync(ProjectSop.detachSop));
+router.post("/:id/sops/:sopId/complete", validate({ body: ProjectSop.completeSchema }), catchAsync(ProjectSop.completeSop));
+router.delete("/:id/sops/:sopId/complete", catchAsync(ProjectSop.uncompleteSop));
 
 // ─── deploy tokens (owner-managed; checks inside controller) ───
 router.get("/:id/deploy-tokens", validate({ params: idParamSchema }), catchAsync(DeployToken.listDeployTokens));

@@ -299,6 +299,70 @@ export function rcaReminderEmail(p: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Server maintenance: SOP upcoming / overdue digest (per project)
+// ─────────────────────────────────────────────────────────────────────────────
+type SopLine = { name: string; period: string };
+
+/** A titled group of SOP rows (name + period) for the digest body. */
+function sopSection(title: string, color: string, items: SopLine[]): string {
+  if (!items.length) return "";
+  return `<div style="margin:18px 0 4px;padding:14px 16px;background:${SOFT};border:1px solid ${BORDER};border-radius:10px">
+    <div style="font-size:13px;font-weight:700;color:${color};margin-bottom:8px">${esc(title)}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+      ${items
+        .map(
+          (it, i) => `<tr>
+        <td style="padding:8px 0;${i ? `border-top:1px solid ${BORDER};` : ""}color:${TEXT};font-size:13px;font-weight:600;vertical-align:top">${esc(it.name)}</td>
+        <td style="padding:8px 0;${i ? `border-top:1px solid ${BORDER};` : ""}color:${MUTED};font-size:13px;text-align:right;white-space:nowrap;vertical-align:top">${esc(it.period)}</td>
+      </tr>`,
+        )
+        .join("")}
+    </table>
+  </div>`;
+}
+
+export function sopReminderEmail(p: {
+  to: string[];
+  projectName: string;
+  projectId?: string;
+  upcoming: SopLine[];
+  overdue: SopLine[];
+}): EmailMessage {
+  const link = config.appBaseUrl ? `${config.appBaseUrl}/projects/${p.projectId ?? ""}?tab=servicelog` : null;
+  const overdue = p.overdue.length;
+  const upcoming = p.upcoming.length;
+  const subject = overdue
+    ? `[Schbang Pulse] ${p.projectName}: ${overdue} maintenance task${overdue > 1 ? "s" : ""} overdue`
+    : `[Schbang Pulse] ${p.projectName}: ${upcoming} maintenance task${upcoming > 1 ? "s" : ""} due soon`;
+  const bits: string[] = [];
+  if (overdue) bits.push(`<strong>${overdue}</strong> overdue`);
+  if (upcoming) bits.push(`<strong>${upcoming}</strong> due soon`);
+  const intro = `Server-maintenance tasks on <strong>${esc(p.projectName)}</strong> need attention — ${bits.join(" and ")}. Please tick each off with proof in the service log.`;
+  const body =
+    sopSection("⚠️ Overdue — missed last period", ACCENT.down, p.overdue) +
+    sopSection("⏳ Due soon", ACCENT.warn, p.upcoming) +
+    button("Open service log", link);
+  const textRows: [string, string | null | undefined][] = [
+    ...p.overdue.map((o): [string, string] => [`Overdue · ${o.name}`, o.period]),
+    ...p.upcoming.map((u): [string, string] => [`Due soon · ${u.name}`, u.period]),
+    ["Open", link],
+  ];
+  return {
+    to: p.to,
+    subject,
+    html: shell({
+      accent: overdue ? "down" : "warn",
+      eyebrow: overdue ? "Maintenance · Overdue" : "Maintenance · Due soon",
+      title: `Maintenance tasks on ${p.projectName}`,
+      intro,
+      bodyHtml: body,
+      footerNote: `You're receiving this because you own maintenance tasks on "${p.projectName}".`,
+    }),
+    text: textBlock(subject, textRows),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Monitor degraded (a check failed; rechecking shortly)
 // ─────────────────────────────────────────────────────────────────────────────
 export function monitorDegradedEmail(p: {
