@@ -13,7 +13,10 @@ import { ProjectJoinRequest } from "../models/projectJoinRequest.model";
 import { projectRole } from "../utils/projectAccess";
 import { accessibleProjectIds } from "../utils/access";
 import { DeployToken } from "../models/deployToken.model";
-import { purgeMaintenanceFor, purgeIncidentImagesFor } from "../services/maintenanceCleanup";
+import { ProjectSop } from "../models/projectSop.model";
+import { SopCompletion } from "../models/sopCompletion.model";
+import { deleteObjects } from "../services/s3";
+import { purgeMaintenanceFor, purgeIncidentImagesFor, keysFromHtml } from "../services/maintenanceCleanup";
 import { publish } from "../services/realtime";
 
 const DOWN_COUNT = { $sum: { $cond: [{ $in: ["$status", ["down", "degraded"]] }, 1, 0] } };
@@ -166,6 +169,17 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
   // incidents, uptime stats), plus its memberships and join requests.
   const monitorIds = (await Monitor.find({ projectId: project._id }).select("_id").lean()).map((m) => m._id);
   await purgeIncidentImagesFor(monitorIds); // delete incident-note images before removing the docs
+  // SOP completion proofs → S3 cleanup, then the completion docs (inline note images + legacy proofKey).
+  const sopProofs = [
+    ...new Set(
+      (await SopCompletion.find({ projectId: project._id }).select("note proofKey").lean()).flatMap((c) => [
+        ...keysFromHtml(c.note),
+        ...(c.proofKey ? [c.proofKey] : []),
+      ]),
+    ),
+  ];
+  if (sopProofs.length) await deleteObjects(sopProofs);
+  await SopCompletion.deleteMany({ projectId: project._id });
   await Promise.all([
     Check.deleteMany({ monitorId: { $in: monitorIds } }),
     Incident.deleteMany({ monitorId: { $in: monitorIds } }),
@@ -173,6 +187,7 @@ export async function deleteProject(req: Request, res: Response): Promise<void> 
     ProjectMember.deleteMany({ projectId: project._id }),
     ProjectJoinRequest.deleteMany({ projectId: project._id }),
     DeployToken.deleteMany({ projectId: project._id }),
+    ProjectSop.deleteMany({ projectId: project._id }),
     // Maintenance windows (monitor- + project-scoped) and their S3 proof images.
     purgeMaintenanceFor({ monitorIds, projectIds: [project._id] }),
   ]);

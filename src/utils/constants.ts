@@ -22,6 +22,11 @@ export const MONITOR_INTERVALS_SEC = [60, 300, 900, 1800] as const;
 export const INCIDENT_STATUSES = ["open", "resolved"] as const;
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
+// SOP / server-maintenance cadences. Frequency is set per project (varies by
+// contract tier/value), not baked into the library template.
+export const SOP_FREQUENCIES = ["daily", "weekly", "monthly", "quarterly"] as const;
+export type SopFrequency = (typeof SOP_FREQUENCIES)[number];
+
 /** Consecutive failures required before an incident is opened (and alerts fire). */
 export const FAILURE_THRESHOLD = 2;
 

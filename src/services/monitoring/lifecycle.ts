@@ -17,6 +17,12 @@ import { probeSslExpiry } from "./sslProbe";
 import { handleSslWarnings } from "./incident";
 import { purgeMaintenanceFor, purgeIncidentImagesFor, sweepOrphanProofs } from "../maintenanceCleanup";
 import { createNotifications } from "../notify";
+import { ProjectSop } from "../../models/projectSop.model";
+import { SopCompletion } from "../../models/sopCompletion.model";
+import { Project } from "../../models/project.model";
+import { periodKey, periodLabel, isDueWindow, periodStart, prevPeriodKey } from "../../utils/sopPeriod";
+import { sendSopDigest, type SopDigestItem } from "../sopNotify";
+import type { SopFrequency } from "../../utils/constants";
 import type { MonitorWithId } from "./types";
 import { DOMAIN_WARN_DAYS } from "../../utils/constants";
 
@@ -222,6 +228,69 @@ async function runLifecyclePass(): Promise<void> {
 
   // 4) Sweep orphaned proof images (uploaded to an editor that was never saved).
   await sweepOrphanProofs();
+
+  // 5) SOP maintenance reminders — per project, nudge owners about tasks that are
+  // "due soon" (current period, in its due window) and "overdue" (last period was
+  // missed). Delivered as one digest per project over email + Google Chat + the
+  // in-app bell. Everything keys off each project's OWN SOP frequency (never the
+  // library default) and dedupes per period so hourly runs don't spam.
+  await remindMaintenanceSops(now);
+}
+
+async function remindMaintenanceSops(now: Date): Promise<void> {
+  const projects = await Project.find({ hasServerMaintenance: true }).select("name maintenanceOwnerId channels").lean();
+  for (const project of projects) {
+    const sops = await ProjectSop.find({ projectId: project._id, active: true }).lean();
+    if (!sops.length) continue;
+
+    const upcoming: SopDigestItem[] = [];
+    const overdue: SopDigestItem[] = [];
+    const markUpcoming: { id: unknown; key: string }[] = [];
+    const markOverdue: { id: unknown; key: string }[] = [];
+
+    for (const s of sops) {
+      const freq = s.frequency as SopFrequency; // the project's own cadence for this SOP
+      const ownerId = s.ownerId ?? project.maintenanceOwnerId ?? null;
+
+      // Due soon: current period, within its nudge window, not yet ticked off.
+      const curKey = periodKey(freq, now);
+      if (isDueWindow(freq, now) && s.lastRemindedPeriod !== curKey) {
+        if (!(await SopCompletion.exists({ projectSopId: s._id, periodKey: curKey }))) {
+          upcoming.push({ name: s.name, periodLabel: periodLabel(freq, curKey), ownerId: ownerId ? String(ownerId) : null });
+          markUpcoming.push({ id: s._id, key: curKey });
+        }
+      }
+
+      // Overdue: the previous period elapsed without a completion. Only if the SOP
+      // already existed before this period began (so a freshly-attached SOP isn't
+      // blamed for a period it wasn't part of).
+      const prevKey = prevPeriodKey(freq, now);
+      const createdAt = (s as { createdAt?: Date }).createdAt;
+      const existedLastPeriod = !createdAt || createdAt < periodStart(freq, now);
+      if (existedLastPeriod && s.lastOverduePeriod !== prevKey) {
+        if (!(await SopCompletion.exists({ projectSopId: s._id, periodKey: prevKey }))) {
+          overdue.push({ name: s.name, periodLabel: periodLabel(freq, prevKey), ownerId: ownerId ? String(ownerId) : null });
+          markOverdue.push({ id: s._id, key: prevKey });
+        }
+      }
+    }
+
+    if (!upcoming.length && !overdue.length) continue;
+
+    await sendSopDigest({
+      projectId: String(project._id),
+      projectName: project.name,
+      channels: project.channels as unknown[] | undefined,
+      upcoming,
+      overdue,
+    });
+
+    // Mark as reminded only after dispatch, so a send failure retries next hour.
+    await Promise.all([
+      ...markUpcoming.map((u) => ProjectSop.updateOne({ _id: u.id }, { lastRemindedPeriod: u.key })),
+      ...markOverdue.map((o) => ProjectSop.updateOne({ _id: o.id }, { lastOverduePeriod: o.key })),
+    ]);
+  }
 }
 
 /** Hourly lifecycle cron. Reminders dedupe per day so hourly runs are safe. */
