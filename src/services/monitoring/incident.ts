@@ -13,6 +13,7 @@ import { notifyChannels, pulseChat, chatMonitorLink } from "../channels";
 import { projectNameOf } from "../../utils/projectName";
 import { monitorChatMentions } from "../../utils/mentions";
 import { humanizeError } from "../../utils/humanizeError";
+import { fmtDateIST, fmtDateTimeIST } from "../../utils/datetime";
 import { isUnderMaintenance } from "./maintenance";
 import { publish } from "../realtime";
 import { createNotifications } from "../notify";
@@ -146,7 +147,7 @@ async function sendDegradedAlert(monitor: MonitorWithId, result: CheckResult, no
           ["What this means", humanizeError({ statusCode: result.statusCode, error: result.error, server: result.server })],
           ["Error", result.error ?? "Check failed"],
           ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
-          ["Detected", now.toLocaleString("en-GB")],
+          ["Detected", fmtDateTimeIST(now)],
         ],
         button: { text: "View monitor", url: chatMonitorLink(monitorId) },
       }),
@@ -267,7 +268,7 @@ async function handleFailure(monitor: MonitorWithId, result: CheckResult, now: D
             ["What this means", humanizeError({ statusCode: result.statusCode, error: result.error, server: result.server })],
             ["Error", result.error ?? "Check failed"],
             ["Response code", result.statusCode != null ? String(result.statusCode) : undefined],
-            ["Detected", now.toLocaleString("en-GB")],
+            ["Detected", fmtDateTimeIST(now)],
           ],
           button: { text: "View incident", url: chatMonitorLink(monitorId) },
         }),
@@ -359,7 +360,7 @@ async function handleRecovery(monitor: MonitorWithId, result: CheckResult, now: 
         rows: [
           ["URL", monitor.url],
           ["Total downtime", downtime],
-          ["Recovered", now.toLocaleString("en-GB")],
+          ["Recovered", fmtDateTimeIST(now)],
         ],
         button: { text: "View monitor", url: chatMonitorLink(monitorId) },
       }),
@@ -406,7 +407,7 @@ export async function handleSslWarnings(monitor: MonitorWithId, expiresAt: Date,
       rows: [
         ["Monitor", monitor.name],
         ["URL", monitor.url],
-        ["Expires", expiresAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })],
+        ["Expires", fmtDateIST(expiresAt)],
       ],
       button: { text: "View monitor", url: chatMonitorLink(monitorId) },
     }),
