@@ -1,6 +1,7 @@
 import type { EmailMessage } from "./index";
 import { config } from "../../config";
 import { humanizeError } from "../../utils/humanizeError";
+import { fmtDateIST, fmtDateTimeIST } from "../../utils/datetime";
 
 interface RecommendationSnap {
   title: string;
@@ -750,17 +751,8 @@ function footerFor(monitorName: string): string {
   return `You're receiving this because you're a recipient for "${monitorName}".`;
 }
 
-/** Format an ISO timestamp as a readable date-time. */
-function fmtWhen(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-/** Format an ISO date as a readable date. */
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-}
+const fmtWhen = fmtDateTimeIST;
+const fmtDate = fmtDateIST;
 
 /** Plain-text body for non-HTML clients. */
 function textBlock(subject: string, rows: [string, string | null | undefined][]): string {

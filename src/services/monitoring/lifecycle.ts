@@ -9,9 +9,9 @@ import { sendEmail, monitorExpiringEmail, monitorExpiredEmail, domainExpiringEma
 import { notifyChannels, pulseChat, chatMonitorLink } from "../channels";
 import { projectNameOf } from "../../utils/projectName";
 import { monitorChatMentions } from "../../utils/mentions";
+import { fmtDateIST } from "../../utils/datetime";
 
-/** Short date like "12 Aug 2026". */
-const shortDate = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+const shortDate = fmtDateIST;
 import { probeDomainExpiry } from "./domainProbe";
 import { probeSslExpiry } from "./sslProbe";
 import { handleSslWarnings } from "./incident";
