@@ -1,5 +1,6 @@
 import { MaintenanceWindow } from "../models/maintenanceWindow.model";
 import { Incident } from "../models/incident.model";
+import { SopCompletion } from "../models/sopCompletion.model";
 import { logger } from "../config/logger";
 import { deleteObjects, listObjects } from "./s3";
 
@@ -77,6 +78,14 @@ export async function sweepOrphanProofs(): Promise<void> {
     incidents.forEach((i) => {
       keysFromHtml(i.rootCauseNotes).forEach((k) => referenced.add(k));
       keysFromHtml(i.resolutionNotes).forEach((k) => referenced.add(k));
+    });
+    // ...and images embedded in SOP completion notes (inline proof) + legacy proofKey.
+    const completions = await SopCompletion.find({ $or: [{ note: /proofs/ }, { proofKey: { $ne: null } }] })
+      .select("note proofKey")
+      .lean();
+    completions.forEach((c) => {
+      keysFromHtml(c.note).forEach((k) => referenced.add(k));
+      if (c.proofKey) referenced.add(c.proofKey);
     });
 
     const orphans = oldEnough.filter((o) => !referenced.has(o.key)).map((o) => o.key);

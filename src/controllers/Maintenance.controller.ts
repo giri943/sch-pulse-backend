@@ -16,6 +16,7 @@ import { publish } from "../services/realtime";
 import { createNotifications } from "../services/notify";
 import { ProjectMember } from "../models/projectMember.model";
 import type { MaintenanceWindowDoc } from "../models/maintenanceWindow.model";
+import { fmtDateTimeIST } from "../utils/datetime";
 
 const GLOBAL = "global";
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, "invalid id");
@@ -108,7 +109,7 @@ export async function createMaintenance(req: Request, res: Response): Promise<vo
     }
     await createNotifications(
       audience,
-      { type: "maintenance", title: `Maintenance scheduled on ${name}`, body: `${startAt.toLocaleString()} → ${endAt!.toLocaleString()}`, link: body.monitorId ? `/monitors/${body.monitorId}?tab=maintenance` : "/projects" },
+      { type: "maintenance", title: `Maintenance scheduled on ${name}`, body: `${fmtDateTimeIST(startAt)} → ${fmtDateTimeIST(endAt!)}`, link: body.monitorId ? `/monitors/${body.monitorId}?tab=maintenance` : "/projects" },
       { excludeUserId: req.user!.id },
     );
   })();

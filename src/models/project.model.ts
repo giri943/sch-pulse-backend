@@ -7,6 +7,11 @@ const projectSchema = new Schema(
     createdBy: { type: Types.ObjectId, ref: "User" },
     /** The seeded "General" project — cannot be deleted; holds ungrouped monitors. */
     isSystem: { type: Boolean, default: false },
+    /** Server-maintenance (SOP) plan: whether this project has one + who owns it. */
+    hasServerMaintenance: { type: Boolean, default: false },
+    maintenanceOwnerId: { type: Types.ObjectId, ref: "User", default: null },
+    /** Google Chat / notification channels that SOP upcoming/overdue alerts fan out to. */
+    channels: { type: [Types.ObjectId], ref: "NotificationChannel", default: [] },
   },
   { timestamps: true },
 );
