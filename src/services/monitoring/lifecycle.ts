@@ -12,7 +12,7 @@ import { monitorChatMentions } from "../../utils/mentions";
 import { fmtDateIST } from "../../utils/datetime";
 
 const shortDate = fmtDateIST;
-import { probeDomainExpiry } from "./domainProbe";
+import { probeDomainExpiry, apexOf } from "./domainProbe";
 import { probeSslExpiry } from "./sslProbe";
 import { handleSslWarnings } from "./incident";
 import { purgeMaintenanceFor, purgeIncidentImagesFor, sweepOrphanProofs } from "../maintenanceCleanup";
@@ -27,11 +27,22 @@ import type { MonitorWithId } from "./types";
 import { DOMAIN_WARN_DAYS } from "../../utils/constants";
 
 const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
 const REMINDER_DAYS = [3, 2, 1]; // daily reminders in the final 3 days
 const PURGE_AFTER_DAYS = 7; // hard-delete this long after soft-delete
-const DOMAIN_REFRESH_MS = 20 * 60 * 60 * 1000; // re-probe a domain's expiry at most ~daily
 
-interface LifecycleMonitor {
+// Tiered RDAP refresh. An expiry date is stable, so only domains approaching
+// expiry need daily attention. The hot window is wider than the first warning
+// threshold (30d) so there is retry headroom before an alert relies on it.
+const DOMAIN_HOT_WINDOW_DAYS = 45;
+const DOMAIN_HOT_INTERVAL_MS = 20 * HOUR;
+const DOMAIN_COLD_INTERVAL_MS = 30 * DAY;
+const DOMAIN_UNKNOWN_INTERVAL_MS = 6 * HOUR;
+// rdap.org throttles at ~10 back-to-back requests; 1.5s spacing measured clean.
+const RDAP_DELAY_MS = 1500;
+const MAX_DOMAIN_PROBES_PER_RUN = 20;
+
+export interface LifecycleMonitor {
   _id: unknown;
   name: string;
   url: string;
@@ -55,6 +66,93 @@ async function recipients(m: LifecycleMonitor): Promise<string[]> {
     emails = users.map((u) => u.email);
   }
   return [...new Set([...emails, ...(m.extraAlertEmails ?? [])])];
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+export function domainRefreshIntervalMs(expiresAt: Date | null, now: Date): number {
+  if (!expiresAt) return DOMAIN_UNKNOWN_INTERVAL_MS;
+  const days = (expiresAt.getTime() - now.getTime()) / DAY;
+  return days <= DOMAIN_HOT_WINDOW_DAYS ? DOMAIN_HOT_INTERVAL_MS : DOMAIN_COLD_INTERVAL_MS;
+}
+
+export interface DomainRefreshStats {
+  monitors: number;
+  due: number;
+  probed: number;
+  updated: number;
+  rateLimited: boolean;
+  capped: boolean;
+}
+
+/**
+ * Probe the apex domains that are due, one request per domain regardless of how
+ * many monitors share it. Returns the fresh expiries keyed by apex.
+ */
+export async function refreshDomainExpiries(
+  monitors: LifecycleMonitor[],
+  now: Date,
+  stats?: DomainRefreshStats,
+): Promise<Map<string, Date>> {
+  const dueByApex = new Map<string, LifecycleMonitor[]>();
+  for (const m of monitors) {
+    const apex = apexOf(m.url);
+    if (!apex) continue;
+    const expiresAt = m.domainExpiresAt ? new Date(m.domainExpiresAt) : null;
+    const checkedAt = m.domainCheckedAt ? new Date(m.domainCheckedAt).getTime() : 0;
+    if (now.getTime() - checkedAt < domainRefreshIntervalMs(expiresAt, now)) continue;
+    const group = dueByApex.get(apex);
+    if (group) group.push(m);
+    else dueByApex.set(apex, [m]);
+  }
+
+  if (stats) {
+    stats.monitors = monitors.length;
+    stats.due = dueByApex.size;
+  }
+  if (!dueByApex.size) return new Map();
+
+  const fresh = new Map<string, Date>();
+  let probed = 0;
+  let updated = 0;
+  for (const [apex, group] of dueByApex) {
+    if (probed >= MAX_DOMAIN_PROBES_PER_RUN) {
+      if (stats) stats.capped = true;
+      logger.info({ deferred: dueByApex.size - probed }, "Domain probe cap reached - rest deferred to next run");
+      break;
+    }
+    if (probed > 0) await sleep(RDAP_DELAY_MS);
+    const res = await probeDomainExpiry(group[0].url);
+    probed++;
+
+    if (res.ok) {
+      fresh.set(apex, res.expiresAt);
+      const ids = group.map((g) => g._id);
+      const renewedIds = group
+        .filter((g) => g.domainExpiresAt && res.expiresAt.getTime() > new Date(g.domainExpiresAt).getTime() + DAY)
+        .map((g) => g._id);
+      await Monitor.updateMany({ _id: { $in: ids } }, { domainCheckedAt: now, domainExpiresAt: res.expiresAt });
+      if (renewedIds.length) await Monitor.updateMany({ _id: { $in: renewedIds } }, { domainWarnedThresholds: [] });
+      updated += ids.length;
+      continue;
+    }
+
+    // Throttled: leave domainCheckedAt alone so these retry next run, and stop
+    // probing — the remaining requests would be throttled too.
+    if (res.reason === "rate_limited") {
+      if (stats) stats.rateLimited = true;
+      logger.warn({ apex, probed, deferred: dueByApex.size - probed }, "RDAP rate-limited - deferring rest of this run");
+      break;
+    }
+    await Monitor.updateMany({ _id: { $in: group.map((g) => g._id) } }, { domainCheckedAt: now });
+  }
+
+  if (stats) {
+    stats.probed = probed;
+    stats.updated = updated;
+  }
+  logger.info({ probed, due: dueByApex.size, monitors: monitors.length }, "Domain expiry refresh complete");
+  return fresh;
 }
 
 // Re-entrancy guard: the hourly pass can run long (per-monitor RDAP probes), so
@@ -126,29 +224,22 @@ async function runLifecyclePass(): Promise<void> {
     }
   }
 
-  // 2) Domain registration expiry — refresh ~daily via RDAP, warn at thresholds.
+  // 2) Domain registration expiry — tiered RDAP refresh, then warn at thresholds.
   // Applies to Full + Domain-only monitors; SSL-only monitors don't track domain.
   const live = (await Monitor.find({ softDeletedAt: null, enabled: true }).lean()) as unknown as LifecycleMonitor[];
-  for (const m of live) {
-    if (m.monitoringScope === "ssl") continue; // SSL-only: no domain monitoring
-    let expiresAt = m.domainExpiresAt ? new Date(m.domainExpiresAt) : null;
-    const stale =
-      !m.domainCheckedAt || now.getTime() - new Date(m.domainCheckedAt).getTime() > DOMAIN_REFRESH_MS;
-    if (stale) {
-      const probed = await probeDomainExpiry(m.url);
-      if (probed) {
-        // If the domain was renewed (expiry moved out), reset warnings so we alert again next cycle.
-        const renewed = expiresAt && probed.getTime() > expiresAt.getTime() + DAY;
-        await Monitor.updateOne(
-          { _id: m._id },
-          { domainCheckedAt: now, domainExpiresAt: probed, ...(renewed ? { domainWarnedThresholds: [] } : {}) },
-        );
-        if (renewed) m.domainWarnedThresholds = [];
-        expiresAt = probed;
-      } else {
-        await Monitor.updateOne({ _id: m._id }, { domainCheckedAt: now });
-      }
+  const domainMonitors = live.filter((m) => m.monitoringScope !== "ssl");
+  const freshExpiry = await refreshDomainExpiries(domainMonitors, now);
+
+  for (const m of domainMonitors) {
+    const apex = apexOf(m.url);
+    const probed = apex ? freshExpiry.get(apex) : undefined;
+    if (probed) {
+      // Renewal moved the expiry out — clear warnings so later thresholds alert again.
+      const previous = m.domainExpiresAt ? new Date(m.domainExpiresAt) : null;
+      if (previous && probed.getTime() > previous.getTime() + DAY) m.domainWarnedThresholds = [];
+      m.domainExpiresAt = probed;
     }
+    const expiresAt = m.domainExpiresAt ? new Date(m.domainExpiresAt) : null;
     if (!expiresAt) continue;
 
     // Domain-only monitors run no uptime check — reflect domain health in status.

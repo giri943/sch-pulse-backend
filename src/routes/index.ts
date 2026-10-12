@@ -18,6 +18,8 @@ import uploadRoutes from "./upload.routes";
 import eventsRoutes from "./events.routes";
 import notificationRoutes from "./notification.routes";
 import sopRoutes from "./sop.routes";
+import debugRoutes from "./debug.routes";
+import { config } from "../config";
 
 /** Mounts every feature router under /api/v1. */
 const router = Router();
@@ -43,5 +45,8 @@ router.use("/uploads", uploadRoutes);
 router.use("/events", eventsRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/sops", sopRoutes);
+
+// Debug/diagnostic endpoints — never mounted in production.
+if (!config.isProd) router.use("/debug", debugRoutes);
 
 export default router;

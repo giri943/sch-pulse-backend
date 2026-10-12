@@ -29,14 +29,18 @@ export async function refreshScopedMonitor(monitorId: unknown): Promise<void> {
       );
       logger.info({ monitorId: String(monitorId), expiry }, "SSL-only monitor refreshed");
     } else if (scope === "domain") {
-      const expiry = await probeDomainExpiry(url, timeoutMs);
-      await Monitor.updateOne(
-        { _id: monitorId },
-        expiry
-          ? { lastCheckedAt: now, domainCheckedAt: now, domainExpiresAt: expiry, status: expiry.getTime() <= now.getTime() ? "down" : "operational" }
-          : { lastCheckedAt: now, domainCheckedAt: now },
+      const res = await probeDomainExpiry(url, timeoutMs);
+      // A throttled probe leaves domainCheckedAt alone so the lifecycle pass retries it.
+      const patch = res.ok
+        ? { lastCheckedAt: now, domainCheckedAt: now, domainExpiresAt: res.expiresAt, status: res.expiresAt.getTime() <= now.getTime() ? "down" : "operational" }
+        : res.reason === "rate_limited"
+          ? { lastCheckedAt: now }
+          : { lastCheckedAt: now, domainCheckedAt: now };
+      await Monitor.updateOne({ _id: monitorId }, patch);
+      logger.info(
+        { monitorId: String(monitorId), ...(res.ok ? { expiry: res.expiresAt } : { reason: res.reason }) },
+        "Domain-only monitor refreshed",
       );
-      logger.info({ monitorId: String(monitorId), expiry }, "Domain-only monitor refreshed");
     }
   } catch (err) {
     logger.error({ err, monitorId: String(monitorId) }, "Scoped monitor refresh failed");
