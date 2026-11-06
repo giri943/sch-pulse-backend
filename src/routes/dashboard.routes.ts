@@ -12,6 +12,7 @@ router.use(requirePermission(P.MONITOR_READ_OWN, P.MONITOR_READ_ALL));
 
 router.get("/", catchAsync(DashboardController.globalStats));
 router.get("/uptime", catchAsync(DashboardController.uptimeOverview));
+router.get("/uptime/calendar", catchAsync(DashboardController.uptimeCalendar));
 router.get("/incidents/recent", catchAsync(DashboardController.recentIncidents));
 router.get("/ssl-expiring", catchAsync(DashboardController.sslExpiring));
 router.get("/domain-expiring", catchAsync(DashboardController.domainExpiring));
